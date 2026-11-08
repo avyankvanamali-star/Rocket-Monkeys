@@ -1,0 +1,1 @@
+torch>=2.2     # PyTorch, for ml/ (Apple Silicon Macs: works on the CPU, no GPU needed)
