@@ -329,3 +329,53 @@ fusion crashes           → keep module statuses, simple scores, no rules
 actions crash            → still show today's alerts, no plan
 Earth file can't save    → summary stays in the database
 report crashes           → error logged, next astronaut still runs
+
+---------------------------------------------------------------
+## 17. SPACE WEATHER — SOLAR EVENTS  (space_weather/)
+---------------------------------------------------------------
+SIGNAL TREE
+    solar cycle (sets how often) → solar eruption →
+        solar flare          → X-ray flux (GOES)          arrives ~8 min      → R level
+        solar particle event → proton flux ≥10 MeV (GOES) arrives tens of min → S level  ← the real danger
+        CME                  → solar wind + Bz (DSCOVR)   arrives 1–3 days    → geomagnetic storm → Kp → G level
+    crew dosimeter = ground truth on board (fast_checks/radiation_watch.py)
+
+DATA  (space_weather/data.py)
+    data/space_weather.csv: time,kind,value,source   (simulated by space_weather/simulate.py,
+    or real NOAA data — same format as format_space_weather.py)
+    group into 5-min snapshots, carry each value forward until it is too old (Kp 3 h, rest 30 min)
+
+EVERY 5 MIN, PER ASTRONAUT  (space_weather/engine.py — SolarWatch)
+    1. SCORE (NOAA scales)
+        X-ray:   M1=R1  M5=R2  X1=R3  X10=R4  X20=R5
+        protons: 10 pfu=S1  100=S2  1,000=S3  10,000=S4  100,000=S5
+        Kp:      5=G1  6=G2  7=G3  8=G4  9=G5
+    2. EARLY WARNING
+        flare R2 or bigger            → 60-min "protons may follow" window
+        proton slope over 15 min ≥ 10x per 2 h (flux ≥ 1 pfu) → "rising" + minutes until S1
+        wind > 600 km/s AND Bz < −10 nT for 30 min → CME arrived
+    3. FUSE → ONE LEVEL
+        GREEN    all quiet
+        WATCH    flare window | protons rising | CME arrived | G1+
+        WARNING  S1–S2 | protons rising INSIDE a flare window | G4+
+        CRITICAL S3+
+        on a spacewalk (EVA day, EVA_HOURS) → one level higher
+        goes UP at once; DOWN only after 30 min calmer; no proton data → level HELD
+    4. ACT  (fixed list, config SW_LEVEL_ACTIONS — the AI may explain these, never invent new ones)
+        WATCH    tell crew, review shelter route, plan to end spacewalk within 60 min
+        WARNING  end spacewalk now, move toward storm shelter
+        CRITICAL shelter now, electronics safe mode, log dose every 5 min
+        CME/G    + expect comms dropouts, back up data
+
+CONNECTIONS  (space_weather/check.py)
+    level goes up → alert (WATCH=watch, WARNING=act, CRITICAL=urgent), domain radiation, key solar_<level>
+    every level change → space_weather table
+    lead time = dosimeter event time − first satellite WARNING (or WATCH) time
+    radiation module: WARNING+ → flag solar_storm + WATCH; CME/G → flag geomagnetic_storm
+    fusion: "Solar Storm Confirmed" = satellites WARNING+ AND dosimeter event
+            sensor doubt = satellites S3+ but dosimeter flat
+    Earth summary JSON: "space_weather" block;  report: "Space wx" line + lead time
+
+FALLBACKS
+    no space weather file → simulate one;  can't load → run without space weather
+    bad row → skipped and counted;  a crash in one day → safe() logs it, run continues

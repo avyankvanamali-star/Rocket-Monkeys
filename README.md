@@ -37,10 +37,20 @@ Only built-in Python is used (no pip installs).
 ## How the folders connect
     data/*.csv -> ingestion/ -> storage/ (shadow_self.db)
                      -> fast_checks/ (every 5 s: heartbeat, radiation)
+data/space_weather.csv -> space_weather/ (every 5 min: flares, protons, CMEs -> early warning)
                      -> modules/ (radiation, muscle, bone, sans, cardio) -- use pipeline/check.py + shadow_model/
                      -> fusion/ (cross-system rules + drift scores)
                      -> actions/ (alerts, plan, Earth summary, report)
 All numbers/thresholds live in config/settings.py. Logic in plain English: PSEUDOCODE.md.
+
+## Space weather (solar events)
+`data/space_weather.csv` = satellite data (X-ray flux, proton flux, solar wind, Bz, Kp), made by
+`python3 -m space_weather.simulate` (also made automatically with the sample data). The algorithm in
+`space_weather/engine.py` scores it on NOAA's R/S/G scales, looks for early-warning signs (big flare,
+protons rising, CME arrival), and gives one level per astronaut: GREEN / WATCH / WARNING / CRITICAL with
+fixed actions. A spacewalk raises the level by one. Logic: PSEUDOCODE.md section 17.
+Demo story: day 5 S1 storm during A2's spacewalk, day 12 flare with no protons (clears by itself),
+day 20 X2 flare -> S3 storm (satellites warn ~26 min before the crew dosimeter), day 21 CME -> G3.
 
 ## Feeding in your own data
 Any CSV with columns: astronaut,time,metric,value,unit,source,quality,detail

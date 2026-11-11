@@ -4,6 +4,7 @@
     data/preflight.csv   : 14 pre-mission days -> baselines + Shadow model training
     data/mission.csv     : mission days 1-30 (5-second streams + daily logs + daily tests)
     data/answer_key.json : every problem planted on purpose -> used by score_run.py
+    data/space_weather.csv : simulated satellite data (flares, protons, CME) -> space_weather/simulate.py
 
 A1 = healthy control (noise only).  A2 = slow drift that starts around day 8-15.
 Planted single events:
@@ -26,8 +27,6 @@ import os
 import random
 import sys
 from datetime import datetime, timedelta
-
-from config.settings import BACKGROUND_DOSE_RATE, ENVIRONMENT
 
 LAUNCH = datetime(2027, 3, 1)
 DAYS = 30
@@ -143,7 +142,7 @@ def dose_stream(a, day):
     rows, total, start = [], 0.0, LAUNCH + timedelta(days=day - 1)
     for i in range(17280):
         t = start + timedelta(seconds=5 * i)
-        rate = BACKGROUND_DOSE_RATE + random.gauss(0, 3)           # background for this environment
+        rate = 75 + random.gauss(0, 3)                             # ~1.8 mSv/day background
         if day == 20 and 14 <= t.hour < 16:                        # solar particle event, both astronauts
             rate = (600 if a == "A1" else 570) + random.gauss(0, 15)
         total += rate * 5 / 3600 / 1000
@@ -222,6 +221,11 @@ ANSWER_KEY = {
         {"name": "Stress episode", "astronaut": "A2", "day": 21, "alert": "elevated_resting_hr"},
         {"name": "Irregular rhythm", "astronaut": "A2", "day": 26, "alert": "irregular_rhythm"},
         {"name": "Dosimeters disagree", "astronaut": "A2", "day": 28, "sensor_doubt": True},
+        # space weather (data/space_weather.csv): satellites must warn on these days
+        {"name": "Solar early warning, X flare (A1)", "astronaut": "A1", "day": 20, "alert": "solar_warning"},
+        {"name": "Solar early warning, X flare (A2)", "astronaut": "A2", "day": 20, "alert": "solar_warning"},
+        {"name": "Proton storm during spacewalk (A2)", "astronaut": "A2", "day": 5, "alert": "solar_critical"},
+        {"name": "CME arrival (A1)", "astronaut": "A1", "day": 21, "alert": "solar_watch"},
     ],
     "drifts": [   # slow problems: caught if any alert of this kind fires on/after 'starts', before day 30
         {"name": "Heart drift (HRV/resting HR)", "astronaut": "A2", "starts": 12, "alerts": ["domain_cardio"]},
@@ -233,8 +237,12 @@ ANSWER_KEY = {
         {"name": "Under-fueling", "astronaut": "A2", "starts": 10, "alerts": ["rule_Under-Fueling"]},
     ],
     # alerts that are EXPECTED on these days (not false alarms) — everything else for A1 is a false alarm
-    "expected_noise": {"A1": {"20": ["radiation_event", "domain_radiation", "rule_Radiation Stress"],
-                              "21": ["radiation_event", "domain_radiation", "rule_Radiation Stress"]}},
+    "expected_noise": {"A1": {"5": ["solar_watch", "solar_warning", "domain_radiation"],
+                              "12": ["solar_watch"],
+                              "20": ["radiation_event", "domain_radiation", "rule_Radiation Stress",
+                                     "solar_watch", "solar_warning", "solar_critical", "rule_Solar Storm Confirmed"],
+                              "21": ["radiation_event", "domain_radiation", "rule_Radiation Stress", "solar_watch"],
+                              "22": ["solar_watch"]}},
 }
 
 
@@ -255,7 +263,8 @@ def main(seed=42):
     with open(os.path.join(OUT, "answer_key.json"), "w") as f:
         json.dump({"seed": seed, **ANSWER_KEY}, f, indent=2)
     print("  wrote data/answer_key.json")
-    print(f"  environment: {ENVIRONMENT} ({BACKGROUND_DOSE_RATE:g} uSv/h background)")
+    from space_weather import simulate
+    simulate.main(seed)
 
 
 if __name__ == "__main__":

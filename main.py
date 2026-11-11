@@ -7,6 +7,7 @@ SHADOW SELF — THE BIG LOOP                              (PSEUDOCODE.md section
 3. for each mission day:
        take in the day's readings
        every 5 s  : heartbeat check + radiation check   (urgent -> alert NOW)
+       every 5 min: space weather check (flares, protons, CMEs -> early warning)
        end of day : summarize -> 5 modules -> fusion -> actions -> report
 4. print any errors that happened (the run never stops because of them)
 
@@ -21,7 +22,7 @@ from datetime import timedelta
 
 from actions.act import act, fallback_action
 from actions.report import print_report
-from config.settings import ASTRONAUTS, LAUNCH_DATE, METRICS
+from config.settings import ASTRONAUTS, EVA_DAYS, LAUNCH_DATE, METRICS
 from fast_checks.heartbeat import HeartbeatMonitor, summarize_heart_day
 from fast_checks.radiation_watch import RadiationWatch, summarize_dose_day
 from fusion.fuse import fallback_fusion, fuse
@@ -29,12 +30,16 @@ from ingestion.ingest import ingest, ingest_csv_rows
 from modules import bone, cardio, muscle, radiation, sans
 from pipeline.safe import ERRORS, LOG_PATH, fallback_module, safe
 from shadow_model.model import ShadowBank
+from space_weather.check import solar_check
+from space_weather.data import load_space_weather
+from space_weather.engine import SolarWatch
 from storage.db import ROOT, open_db
 
 DATA = os.path.join(ROOT, "data")
 FILES = {"preflight": os.path.join(DATA, "preflight.csv"), "mission": os.path.join(DATA, "mission.csv")}
 UPLOADED = os.path.join(DATA, "uploaded.csv")  # CSV files uploaded in the dashboard ("add" mode)
 MANUAL = os.path.join(DATA, "manual.csv")      # readings typed into the dashboard
+SPACE_WEATHER = os.path.join(DATA, "space_weather.csv")   # satellite data: simulated, or real NOAA (same format)
 MODULES = {"radiation": radiation, "muscle": muscle, "bone": bone, "sans": sans, "cardio": cardio}
 
 
@@ -73,6 +78,19 @@ def load_data(db, log):
                 db.save_readings(batch)
                 batch = []
     db.save_readings(batch)
+
+
+def load_space_weather_data(log):
+    """Satellite data (X-rays, protons, solar wind, Kp). Missing -> make the simulated file first.
+    Fallback: can't load -> {} and the run goes on without space weather."""
+    if not os.path.exists(SPACE_WEATHER):
+        print("  No space weather file -> making simulated satellite data first")
+        from space_weather import simulate
+        safe("simulate space weather", simulate.main)
+    data = safe("load space weather", lambda: load_space_weather(SPACE_WEATHER, log), {})
+    if data:
+        print(f"Space weather: {sum(len(v) for v in data.values()):,} snapshots, days {min(data)}-{max(data)}")
+    return data
 
 
 # ---------------- 2. pre-mission ----------------
@@ -129,10 +147,11 @@ def end_of_day(db, a, day, heart, rad, fired, ctx):
         mods["cardio"]["flags"].add("irregular_rhythm")
 
     fused = safe(f"fusion {a} day {day}", lambda: fuse(db, a, day, mods, ctx, fired), None) or fallback_fusion(mods)
-    action = safe(f"actions {a} day {day}", lambda: act(db, a, day, mods, fused), None) \
+    action = safe(f"actions {a} day {day}", lambda: act(db, a, day, mods, fused, ctx), None) \
         or fallback_action(db, a, day, fused)
     safe(f"save scores {a} day {day}", lambda: db.save_scores(a, day, fused, action["tier"]))
-    safe(f"report {a} day {day}", lambda: print_report(a, day, mods, fused, action))
+    safe(f"report {a} day {day}", lambda: print_report(a, day, mods, fused, action,
+                                                                    ctx["space_weather"].get((a, day))))
     safe(f"relearn {a} day {day}", lambda: ctx["shadow"].relearn(db, a, day))
 
 
@@ -161,9 +180,11 @@ def main():
         print(f"  ingestion: {note[:100]}" + (f"   (x{n})" if n > 1 else ""))
 
     print(f"Astronauts: {', '.join(astronauts)}")
-    ctx = {"shadow": shadow, "rad_event_days": {a: [] for a in astronauts}}
+    ctx = {"shadow": shadow, "rad_event_days": {a: [] for a in astronauts}, "space_weather": {}}
     hearts = {a: HeartbeatMonitor(a, db.get_baseline(a, "resting_hr")) for a in astronauts}
     rads = {a: RadiationWatch(a) for a in astronauts}
+    sw = load_space_weather_data(log)
+    suns = {a: SolarWatch(a, EVA_DAYS.get(a, [])) for a in astronauts}
 
     for day in sorted(by_day):
         print("\n" + "=" * 72 + f"\n  MISSION DAY {day}\n" + "=" * 72)
@@ -171,6 +192,7 @@ def main():
             if a not in by_day[day]:
                 continue                                   # no data for this astronaut today
             fired = fast_checks(db, a, day, hearts[a], rads[a], ctx)
+            safe(f"space weather {a} day {day}", lambda: solar_check(db, a, day, suns[a], sw.get(day, []), ctx))
             end_of_day(db, a, day, hearts[a], rads[a], fired, ctx)
 
     print("\n" + "=" * 72)
