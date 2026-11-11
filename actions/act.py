@@ -1,10 +1,11 @@
 """
 ACTIONS                                                 (PSEUDOCODE.md section 14)
 
-ALERT TIER:
-    URGENT only from hard rules (heartbeat C, radiation event)
-    ACT    = any domain "act" or score < 50
-    WATCH  = any domain "watch" or score < 75
+ALERT TIER (zones in config/settings.py):
+    URGENT = system score < 85, or a hard rule (heartbeat C, radiation event)  -> contact mission control
+    ACT    = any domain "act" or score < 90                                    -> basic medical care onboard
+    WATCH  = any domain "watch" or score <= 95                                 -> extra observations
+    NOMINAL = above 95                                                         -> no extra observation
     don't repeat the same alert more than once a day
 COUNTERMEASURES: lookup table (config) -> today's plan
 SCHEDULE: heavy task on a spacewalk day? -> move it a day later
@@ -14,10 +15,11 @@ FALLBACK: can't write the file -> summary still lives in the database
 import json
 import os
 
-from config.settings import COUNTERMEASURES, EVA_DAYS, MAX_PLAN_ACTIONS, PLAN_PRIORITY, STATUS_ORDER, worst
+from config.settings import COUNTERMEASURES, EVA_DAYS, LEVEL_ACTION, LEVEL_MEANING, STATUS_ORDER, worst
 from storage.db import ROOT
 
 OUT_DIR = os.path.join(ROOT, "outputs")
+SYSTEM_NAME = {"radiation": "radiation", "muscle": "muscle", "bone": "bone", "sans": "eyes/brain", "cardio": "heart"}
 
 
 def act(db, astronaut, day, mods, fused):
@@ -25,7 +27,8 @@ def act(db, astronaut, day, mods, fused):
     for d, status in fused["statuses"].items():
         if STATUS_ORDER.get(status, -1) >= 1:
             reasons = mods[d]["notes"] + [r["reason"] for r in mods[d]["results"] if r["flagged"]]
-            msg = f"{d.upper()} score {fused['scores'][d]}: " + ("; ".join(reasons[:3]) or "score dropped")
+            msg = (f"{LEVEL_MEANING.get(status, status)}. {d.upper()} score {fused['scores'][d]}: "
+                   + ("; ".join(reasons[:3]) or "score dropped"))
             db.save_alert(astronaut, day, None, status, d, f"domain_{d}", msg)
     for name, why in fused["rules"]:
         db.save_alert(astronaut, day, None, "watch", "fusion", f"rule_{name}", f"{name}: {why}")
@@ -33,11 +36,22 @@ def act(db, astronaut, day, mods, fused):
     alerts = db.get_alerts(astronaut, day)
     tier = worst([a["tier"] for a in alerts] + [fused["overall_status"]])
 
-    # 2. countermeasures + schedule check — most important first, at most MAX_PLAN_ACTIONS
+    # 2. what each level means for the crew, then countermeasures + schedule check
     plan = []
-    wanted = [f for f in fused["flags"] if f in COUNTERMEASURES]
-    wanted.sort(key=lambda f: PLAN_PRIORITY.index(f) if f in PLAN_PRIORITY else len(PLAN_PRIORITY))
-    for flag in wanted[:MAX_PLAN_ACTIONS]:
+    for level in ("urgent", "act", "watch"):                   # one plan line per level, all its systems
+        systems = [d for d, st in fused["statuses"].items() if st == level]
+        if systems:
+            action, offset = LEVEL_ACTION[level]
+            action = action.format(system=", ".join(SYSTEM_NAME.get(d, d) for d in systems))
+            note = f"{level.upper()}: " + ", ".join(f"{SYSTEM_NAME.get(d, d)} {fused['scores'][d]}" for d in systems)
+            db.save_plan(astronaut, day, day + offset, action, note)
+            plan.append({"day": day + offset, "action": action, "note": note})
+    hard = [a for a in alerts if a["tier"] == "urgent" and not a["key"].startswith("domain_")]
+    if hard:                                                   # heartbeat / radiation hard rules
+        action = "Contact mission control now: " + "; ".join(a["message"][:60] for a in hard[:2])
+        db.save_plan(astronaut, day, day, action, "URGENT: hard rule")
+        plan.append({"day": day, "action": action, "note": "URGENT: hard rule"})
+    for flag in sorted(fused["flags"]):
         if flag in COUNTERMEASURES:
             action, heavy = COUNTERMEASURES[flag]
             when, note = day + 1, ""
@@ -48,6 +62,7 @@ def act(db, astronaut, day, mods, fused):
 
     # 3. Earth summary packet
     packet = {"astronaut": astronaut, "mission_day": day, "tier": tier, "overall_score": fused["overall"],
+              "what_to_do": LEVEL_MEANING.get(tier, tier), "contact_mission_control": tier == "urgent",
               "scores": fused["scores"], "rules_fired": [r[0] for r in fused["rules"]],
               "alerts": [{k: a[k] for k in ("tier", "domain", "message")} for a in alerts
                          if STATUS_ORDER.get(a["tier"], 0) >= 1],
