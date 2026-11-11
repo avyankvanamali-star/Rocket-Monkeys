@@ -4,26 +4,28 @@ CARDIO MODULE — daily                                   (PSEUDOCODE.md section
 uses the heartbeat end-of-day summary
 resting HR, HRV       -> 7-step check WITH Shadow model
 HR recovery, BP, irregular beats, stroke volume -> 7-step check
-Shadow residual in the bad direction N days in a row -> ACT "cardio drift"
+CUSUM: running total of 'worse than Shadow Self expected' gaps passes CUSUM_H -> ACT "cardio drift"
 radiation event in last 7 days -> stricter checks
 """
-from config.settings import CARDIO_DRIFT_DAYS, METRICS, STRICT_DAYS
+from config.settings import CUSUM_H, CUSUM_K, METRICS, STRICT_DAYS
 from pipeline.check import check_measured, module_result
 
 METRICS_TODAY = ["resting_hr", "hrv_rmssd", "hr_recovery", "systolic_bp", "irregular_beats", "stroke_volume"]
 
 
-def _drifting(db, astronaut, metric, day):
-    """True if the Shadow residual was in the bad direction for N days in a row."""
-    today = db.get_latest_result(astronaut, metric, day)
-    if not today or today["day"] != day:
-        return False
-    past = [today] + db.get_recent_results(astronaut, metric, CARDIO_DRIFT_DAYS - 1, before_day=day)
+def cusum(db, astronaut, metric, day):
+    """CUSUM drift score for one metric, mission day 1..today.
+    Each day: gap = how much worse than expected (in noise units).  total = max(0, total + gap - K).
+    Returns the total — above CUSUM_H means a slow, steady drift (not just one bad day)."""
+    rows = db.get_recent_results(astronaut, metric, 1000, before_day=day + 1)
     up_is_bad = METRICS[metric]["bad"] == "up"
-    return len(past) == CARDIO_DRIFT_DAYS and all(
-        p["residual"] is not None and p["resid_sd"]
-        and (p["residual"] > 0 if up_is_bad else p["residual"] < 0)
-        and abs(p["residual"]) > p["resid_sd"] for p in past)
+    total = 0.0
+    for r in sorted(rows, key=lambda r: r["day"]):
+        if r["day"] < 1 or r["residual"] is None or not r["resid_sd"]:
+            continue
+        gap = (r["residual"] if up_is_bad else -r["residual"]) / r["resid_sd"]
+        total = max(0.0, total + gap - CUSUM_K)
+    return total
 
 
 def run(db, astronaut, day, ctx):
@@ -32,10 +34,13 @@ def run(db, astronaut, day, ctx):
     statuses, flags, notes = [], [], []
 
     for metric in ("hrv_rmssd", "resting_hr"):
-        if _drifting(db, astronaut, metric, day):
+        drift = cusum(db, astronaut, metric, day)
+        if drift > CUSUM_H:
             statuses.append("act")
-            flags.append("cardio_drift")
-            notes.append(f"{METRICS[metric]['label']} worse than Shadow Self expected {CARDIO_DRIFT_DAYS} days in a row")
+            if "cardio_drift" not in flags:
+                flags.append("cardio_drift")
+            notes.append(f"{METRICS[metric]['label']} drifting: steadily worse than Shadow Self expected "
+                         f"(drift score {drift:.1f} > {CUSUM_H:g})")
 
     if any(r["metric"] == "irregular_beats" and r["flagged"] for r in results):
         flags.append("irregular_rhythm")

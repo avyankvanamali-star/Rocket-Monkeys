@@ -26,6 +26,8 @@ NAMES = {"radiation": "Radiation", "muscle": "Muscle", "bone": "Bone", "sans": "
          "cardio": "Heart", "overall": "Overall"}
 INPUT_GROUPS = ["cardio", "radiation", "muscle", "bone", "sans", "context", "nutrition"]
 SKIP_INPUT = {"heart_rate", "dose_rate"}            # 5-second streams come from sensors, not typing
+CHART_METRICS = ["hrv_rmssd", "resting_hr"]          # the "Shadow Self vs reality" charts
+PLAIN_LIMIT = 0.20                                   # demo rule for comparison: 20% worse than baseline
 e = lambda x: html.escape("" if x is None else str(x))
 
 
@@ -58,6 +60,12 @@ def load(astronaut, day):
         "plans": _q(con, "SELECT * FROM plans WHERE astronaut=? AND made_on_day=?", (astronaut, day)),
         "results": _q(con, "SELECT * FROM results WHERE astronaut=? AND day=? "
                            "ORDER BY flagged DESC, domain, metric", (astronaut, day)),
+        "series": {m: _q(con, "SELECT day, value, predicted FROM results WHERE astronaut=? AND metric=? "
+                              "AND day > 0 ORDER BY day", (astronaut, m)) for m in CHART_METRICS},
+        "baseline": {r["metric"]: r["value"] for r in _q(con, "SELECT metric, value FROM baselines WHERE astronaut=?",
+                                                          (astronaut,))},
+        "first_drift": (_q(con, "SELECT MIN(day) AS d FROM alerts WHERE astronaut=? AND key='domain_cardio' "
+                                "AND tier IN ('act','urgent')", (astronaut,)) or [{}])[0].get("d"),
     }
     con.close()
     return d
@@ -116,6 +124,62 @@ def metric_options():
 
 def link(a, day):
     return f"/?a={a}&day={day}"
+
+
+# ---------------- chart: expected (Shadow Self) vs actual ----------------
+def chart(d, metric):
+    """SVG line chart: what Shadow Self EXPECTED vs what was MEASURED, gap shaded.
+    Dashed red line = a plain fixed limit (20% worse than baseline) for comparison."""
+    pts = [p for p in d["series"].get(metric, []) if p["value"] is not None]
+    if len(pts) < 2:
+        return f'<div class="chart"><b>{e(METRICS[metric]["label"])}</b><p class="hint">Not enough days yet.</p></div>'
+    base = d["baseline"].get(metric)
+    up_is_bad = METRICS[metric]["bad"] == "up"
+    limit = base * (1 + PLAIN_LIMIT if up_is_bad else 1 - PLAIN_LIMIT) if base else None
+    ys = [p["value"] for p in pts] + [p["predicted"] for p in pts if p["predicted"] is not None] + \
+         [v for v in (base, limit) if v]
+    lo, hi = min(ys), max(ys)
+    pad = (hi - lo) * 0.12 or 1
+    lo, hi = lo - pad, hi + pad
+    W, H, L, R, T, B = 520, 210, 42, 10, 12, 26
+    days = [p["day"] for p in pts]
+    d0, d1 = min(days), max(days)
+    x = lambda day: L + (day - d0) / max(d1 - d0, 1) * (W - L - R)
+    y = lambda v: T + (hi - v) / (hi - lo) * (H - T - B)
+    line = lambda key: " ".join(f"{x(p['day']):.1f},{y(p[key]):.1f}" for p in pts if p[key] is not None)
+    both = [p for p in pts if p["predicted"] is not None]
+    gap = ""
+    if len(both) > 1:
+        poly = [f"{x(p['day']):.1f},{y(p['value']):.1f}" for p in both] + \
+               [f"{x(p['day']):.1f},{y(p['predicted']):.1f}" for p in reversed(both)]
+        gap = f'<polygon points="{" ".join(poly)}" class="gap"/>'
+    grid = "".join(f'<line x1="{L}" x2="{W - R}" y1="{y(v):.1f}" y2="{y(v):.1f}" class="grid"/>'
+                   f'<text x="{L - 6}" y="{y(v) + 4:.1f}" class="ax" text-anchor="end">{v:.0f}</text>'
+                   for v in (lo + (hi - lo) * k / 4 for k in range(5)))
+    ticks = "".join(f'<text x="{x(dd):.1f}" y="{H - 8}" class="ax" text-anchor="middle">{dd}</text>'
+                    for dd in days if dd == d0 or dd == d1 or dd % 5 == 0)
+    extra = ""
+    if limit:
+        extra += (f'<line x1="{L}" x2="{W - R}" y1="{y(limit):.1f}" y2="{y(limit):.1f}" class="limit"/>'
+                  f'<text x="{L + 4}" y="{y(limit) - 4:.1f}" class="ax lim">plain 20% limit</text>')
+    if d0 <= d["day"] <= d1:
+        extra += f'<line x1="{x(d["day"]):.1f}" x2="{x(d["day"]):.1f}" y1="{T}" y2="{H - B}" class="today"/>'
+    if d["first_drift"] and d0 <= d["first_drift"] <= d1:
+        fx = x(d["first_drift"])
+        extra += (f'<line x1="{fx:.1f}" x2="{fx:.1f}" y1="{T}" y2="{H - B}" class="alarm"/>'
+                  f'<text x="{fx + 4:.1f}" y="{T + 10}" class="ax alm">Shadow Self alert (day {d["first_drift"]})</text>')
+    return f"""<div class="chart"><b>{e(METRICS[metric]["label"])}</b> <span class="hint">({e(METRICS[metric]["unit"])})</span>
+      <svg viewBox="0 0 {W} {H}" role="img" aria-label="{e(METRICS[metric]["label"])}: expected vs measured">
+        {grid}{gap}<polyline points="{line('predicted')}" class="exp"/><polyline points="{line('value')}" class="act"/>
+        {extra}{ticks}</svg></div>"""
+
+
+def charts(d):
+    legend = ('<p class="hint legend"><span class="k act"></span>measured <span class="k exp"></span>'
+              'Shadow Self expected (from sleep, workload, CO₂) <span class="k gap"></span>unexplained gap '
+              '<span class="k lim"></span>plain fixed limit</p>')
+    return (f'<section class="panel"><h3>Shadow Self vs reality — {e(d["astronaut"])}</h3>{legend}'
+            f'<div class="charts">{"".join(chart(d, m) for m in CHART_METRICS)}</div></section>')
 
 
 # ---------------- page ----------------
@@ -230,6 +294,7 @@ def page(astronaut, day, msg="", msg_kind="info"):
     <nav class="days">{days}</nav>
     <h2>{e(astronaut)} · Mission day {day}</h2>
     <section class="cards">{cards}</section>
+    {charts(d)}
 
     <section class="grid">
       <div class="panel"><h3>Alerts</h3><ul class="list">{alerts}</ul>
@@ -310,7 +375,16 @@ td.t{{text-align:center;font-weight:700}}td.ok{{color:var(--ok)}}td.watch{{color
 td.urgent{{color:var(--urgent)}}tr.on{{background:#18223d}}.reason{{color:var(--dim);min-width:260px}}
 pre{{white-space:pre-wrap;font-size:12px;color:var(--dim);max-height:420px;overflow:auto}}
 summary{{cursor:pointer;color:var(--dim);font-weight:600}}.empty{{text-align:center;padding:60px 0}}
-@media (max-width:760px){{.grid,.grid2{{grid-template-columns:1fr}}.form{{grid-template-columns:1fr 1fr}}}}
+.charts{{display:grid;grid-template-columns:1fr 1fr;gap:14px}}.chart svg{{width:100%;height:auto;display:block}}
+.chart .grid{{stroke:var(--line);stroke-width:1}}.chart .ax{{fill:var(--dim);font-size:10px}}
+.chart .act{{fill:none;stroke:var(--text);stroke-width:2}}.chart .exp{{fill:none;stroke:var(--accent);stroke-width:2;stroke-dasharray:5 4}}
+.chart .gap{{fill:var(--act);opacity:.22}}.chart .limit{{stroke:var(--urgent);stroke-width:1.5;stroke-dasharray:3 3}}
+.chart .lim{{fill:var(--urgent)}}.chart .today{{stroke:var(--dim);stroke-width:1}}
+.chart .alarm{{stroke:var(--watch);stroke-width:2}}.chart .alm{{fill:var(--watch);font-weight:700}}
+.legend .k{{display:inline-block;width:18px;height:3px;vertical-align:middle;margin:0 4px 0 10px;background:var(--text)}}
+.legend .k.exp{{background:var(--accent)}}.legend .k.gap{{background:var(--act);opacity:.4;height:8px}}.legend .k.lim{{background:var(--urgent)}}
+.card,.chip,.crew,.day{{transition:all .25s ease}}.card:hover,.crew:hover{{transform:translateY(-2px);border-color:var(--accent)}}
+@media (max-width:760px){{.grid,.grid2,.charts{{grid-template-columns:1fr}}.form{{grid-template-columns:1fr 1fr}}}}
 </style></head><body>
 <header><div><h1>🛰️ SHADOW SELF</h1><small>Astronaut health monitor · early warning</small></div>
 <form method="post" action="/run"><input type="hidden" name="astronaut" value="{e(astronaut)}">

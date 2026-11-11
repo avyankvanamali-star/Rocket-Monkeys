@@ -13,6 +13,7 @@ from the rules engine, so the system always gives an answer.
 Run from the shadow_self folder:
     python3 AI-agent/agent.py --test           check your key + connection
     python3 AI-agent/agent.py --brief A2 3     daily briefing for A2, day 3
+    python3 AI-agent/agent.py --brief crew 20  briefing for everyone (AI only for astronauts who need it)
     python3 AI-agent/agent.py                  chat (type 'quit' to stop)
     add --fast to use the small test model (higher free limits)
 """
@@ -23,7 +24,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import agent_prompts as prompts  # noqa: E402
 import agent_tools as tools  # noqa: E402
-from agent_settings import (AGENT_MODEL, BACKUP_MODEL, REASONING_EFFORT, GROQ_BASE_URL, HERE, MAX_ANSWER_TOKENS, MAX_TOOL_ROUNDS,  # noqa: E402
+from agent_settings import (AGENT_MODEL, BACKUP_MODEL, BRIEFING_GAP_SECONDS, SKIP_AI_WHEN_OK, REASONING_EFFORT, GROQ_BASE_URL, HERE, MAX_ANSWER_TOKENS, MAX_TOOL_ROUNDS,  # noqa: E402
                       TEMPERATURE, TEST_MODEL)
 
 
@@ -154,6 +155,10 @@ def briefing(astronaut, day=None, model=AGENT_MODEL):
     summary = tools.get_day_summary(astronaut, day)
     systems = [s for s in ("radiation", "muscle", "bone", "sans", "cardio")
                if re.search(rf"- {s}: \S+ (WATCH|ACT|URGENT)", summary)]
+    if SKIP_AI_WHEN_OK and not systems and not re.search(r"(WATCH|ACT|URGENT)", summary):
+        # nothing needs attention -> save tokens: no AI call at all
+        return (f"{astronaut}, day {day}: all systems OK — no action needed today. "
+                "(No AI used: nothing to explain.)"), False
     guide = tools.look_up_guideline(", ".join(systems)) if systems else "All systems OK."
     question = (prompts.BRIEFING_REQUEST.format(astronaut=astronaut, day=day)
                 + "\n\nTODAY'S DATA (from the monitoring system):\n" + summary
@@ -187,6 +192,17 @@ def main():
             except Exception:  # noqa: BLE001
                 pass
             print("".join(traceback.format_exc().splitlines(keepends=True)[-14:]))
+        return
+
+    if args[:2] == ["--brief", "crew"]:              # every astronaut, spaced out, AI only where needed
+        import time
+        day = int(args[2]) if len(args) > 2 else None
+        crew = re.findall(r"^(A\d+):", tools.get_overview(), re.M)
+        for i, a in enumerate(crew):
+            answer, used_ai = briefing(a, day, model)
+            print(("🛰️  " if used_ai else "") + answer + "\n")
+            if used_ai and i < len(crew) - 1:
+                time.sleep(BRIEFING_GAP_SECONDS)
         return
 
     if args[:1] == ["--brief"]:

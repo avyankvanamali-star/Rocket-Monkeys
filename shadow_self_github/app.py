@@ -99,7 +99,7 @@ def upload_csv(text, mode, name):
 
 def generate_data():
     try:
-        p = subprocess.run([sys.executable, "generate_sample_data.py"], cwd=ROOT, capture_output=True,
+        p = subprocess.run([sys.executable, "generate_30day_data.py"], cwd=ROOT, capture_output=True,
                            text=True, timeout=300)
         return p.returncode == 0, ("Fresh sample data generated." if p.returncode == 0 else
                                    "Generator failed: " + p.stderr[-200:])

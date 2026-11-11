@@ -3,7 +3,7 @@ RADIATION MODULE — daily                                (PSEUDOCODE.md section
 
 total so far    = sum of daily doses
 percent used    = total / career limit x 100
-burn rate       = average daily dose over last 7 days
+burn rate       = MEDIAN daily dose over last 7 days (one storm day doesn't inflate it)
 projected total = total + burn rate x days left
 projected > limit -> ACT | percent used > 80% -> WATCH
 passive dosimeter differs from active by >10% -> "sensor doubt"
@@ -17,7 +17,7 @@ def run(db, astronaut, day, ctx):
     doses = [h["value"] for h in db.get_history(astronaut, "daily_dose", 1, day)]
     total = sum(doses)
     last7 = doses[-7:]
-    burn = sum(last7) / len(last7) if last7 else 0.0
+    burn = sorted(last7)[len(last7) // 2] if last7 else 0.0     # median: a one-off storm is already in 'total'
     projected = total + burn * (MISSION_DAYS - day)
     used_pct = total / CAREER_LIMIT_MSV * 100
     fraction = projected / CAREER_LIMIT_MSV

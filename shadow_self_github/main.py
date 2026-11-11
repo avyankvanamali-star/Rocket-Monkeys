@@ -16,7 +16,7 @@ a fallback is used, and the system keeps going.
 Run:  python3 main.py      (from inside the shadow_self folder)
 """
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import timedelta
 
 from actions.act import act, fallback_action
@@ -25,7 +25,7 @@ from config.settings import ASTRONAUTS, LAUNCH_DATE, METRICS
 from fast_checks.heartbeat import HeartbeatMonitor, summarize_heart_day
 from fast_checks.radiation_watch import RadiationWatch, summarize_dose_day
 from fusion.fuse import fallback_fusion, fuse
-from ingestion.ingest import ingest, ingest_csv
+from ingestion.ingest import ingest, ingest_csv_rows
 from modules import bone, cardio, muscle, radiation, sans
 from pipeline.safe import ERRORS, LOG_PATH, fallback_module, safe
 from shadow_model.model import ShadowBank
@@ -39,37 +39,49 @@ MODULES = {"radiation": radiation, "muscle": muscle, "bone": bone, "sans": sans,
 
 
 # ---------------- 1. load data ----------------
-def load_data(log):
+BATCH = 50_000   # readings saved to the database at a time
+
+
+def clear_outputs():
+    """Start each run clean: old Earth summaries and old error logs are removed."""
+    out = os.path.join(ROOT, "outputs")
+    if not os.path.isdir(out):
+        return
+    for name in os.listdir(out):
+        if name.startswith("earth_summary_") or name == "errors.log":
+            try:
+                os.remove(os.path.join(out, name))
+            except OSError:
+                pass
+
+
+def load_data(db, log):
+    """Stream every file straight into the database, BATCH rows at a time (low memory).
+    Duplicates (same astronaut + metric + time) are handled by the database:
+    the LAST one wins, so dashboard uploads/typed entries (loaded last) still win."""
     if not all(os.path.exists(f) for f in FILES.values()):
-        print("  No data files found -> making sample data first")
-        import generate_sample_data
-        safe("generate sample data", generate_sample_data.main)
-    preflight, mission = ingest_csv(FILES["preflight"], log), ingest_csv(FILES["mission"], log)
-    for path, name in ((UPLOADED, "uploaded"), (MANUAL, "typed-in")):   # dashboard data: day <= 0 = pre-mission
-        if os.path.exists(path):
-            extra = ingest_csv(path, log)
-            preflight += [r for r in extra if r["day"] <= 0]
-            mission += [r for r in extra if r["day"] > 0]
-            if extra:
-                log.append(f"loaded {len(extra):,} {name} dashboard readings")
-    return dedupe(preflight, log), dedupe(mission, log)
-
-
-def dedupe(readings, log):
-    """Same astronaut + time + metric twice? keep the LAST one (uploads/typed entries win)."""
-    unique = {(r["astronaut"], r["time"], r["metric"]): r for r in readings}
-    if len(unique) < len(readings):
-        log.append(f"skipped {len(readings) - len(unique):,} duplicate readings")
-    return list(unique.values())
+        print("  No data files found -> making 30-day sample data first")
+        import generate_30day_data
+        safe("generate sample data", generate_30day_data.main)
+    batch = []
+    for path in (FILES["preflight"], FILES["mission"], UPLOADED, MANUAL):
+        if not os.path.exists(path):
+            continue
+        for reading in ingest_csv_rows(path, log):
+            batch.append(reading)
+            if len(batch) >= BATCH:
+                db.save_readings(batch)
+                batch = []
+    db.save_readings(batch)
 
 
 # ---------------- 2. pre-mission ----------------
-def pre_mission(db, readings, astronauts):
-    db.save_readings(readings)
+def pre_mission(db, astronauts):
     n = db.build_baselines_from_preflight()
     shadow = ShadowBank()
     trained = safe("train Shadow models", lambda: shadow.train(db, astronauts), fallback={})
-    print(f"\nPre-mission: {len(readings)} readings -> {n} baselines")
+    count = db.con.execute("SELECT COUNT(*) FROM measurements WHERE day <= 0").fetchone()[0]
+    print(f"\nPre-mission: {count} readings -> {n} baselines")
     for (a, t), (days, err) in trained.items():
         print(f"  Shadow model {a} {t}: " + (f"trained on {days} days, usual error ±{err}" if err else
                                              f"not enough data ({days} days) — checks run without it"))
@@ -128,21 +140,25 @@ def end_of_day(db, a, day, heart, rad, fired, ctx):
 def main():
     print("=" * 72 + "\n  SHADOW SELF — astronaut health engine (no UI)\n" + "=" * 72)
     log = []
-    preflight, mission = load_data(log)
-    if not mission:
+    clear_outputs()
+    db = open_db()
+    load_data(db, log)
+    rows = db.con.execute("SELECT DISTINCT day, astronaut FROM measurements WHERE day > 0").fetchall()
+    if not rows:
         print("  No usable mission data — nothing to process. Check the data folder.")
         return
+    by_day = defaultdict(set)              # day -> astronauts with data that day
+    for r in rows:
+        by_day[r["day"]].add(r["astronaut"])
 
-    db = open_db()
-    astronauts = sorted({r["astronaut"] for r in preflight + mission}) or ASTRONAUTS   # whoever is in the data
-    shadow = pre_mission(db, preflight, astronauts)
+    found = [r[0] for r in db.con.execute("SELECT DISTINCT astronaut FROM measurements ORDER BY astronaut")]
+    astronauts = found or ASTRONAUTS       # whoever is in the data
+    shadow = pre_mission(db, astronauts)
 
-    by_day = defaultdict(list)
-    for r in mission:
-        by_day[r["day"]].append(r)
-    print(f"Mission data: {len(mission):,} clean readings, days {min(by_day)}-{max(by_day)}")
-    for note in log:
-        print(f"  ingestion: {note[:100]}")
+    count = db.con.execute("SELECT COUNT(*) FROM measurements WHERE day > 0").fetchone()[0]
+    print(f"Mission data: {count:,} clean readings, days {min(by_day)}-{max(by_day)}")
+    for note, n in Counter(log).most_common():   # same message many times -> print once with a count
+        print(f"  ingestion: {note[:100]}" + (f"   (x{n})" if n > 1 else ""))
 
     print(f"Astronauts: {', '.join(astronauts)}")
     ctx = {"shadow": shadow, "rad_event_days": {a: [] for a in astronauts}}
@@ -150,10 +166,9 @@ def main():
     rads = {a: RadiationWatch(a) for a in astronauts}
 
     for day in sorted(by_day):
-        db.save_readings(by_day[day])
         print("\n" + "=" * 72 + f"\n  MISSION DAY {day}\n" + "=" * 72)
         for a in astronauts:
-            if not any(r["astronaut"] == a for r in by_day[day]):
+            if a not in by_day[day]:
                 continue                                   # no data for this astronaut today
             fired = fast_checks(db, a, day, hearts[a], rads[a], ctx)
             end_of_day(db, a, day, hearts[a], rads[a], fired, ctx)

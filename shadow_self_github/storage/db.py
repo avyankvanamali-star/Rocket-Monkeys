@@ -16,7 +16,7 @@ SCHEMA = """
 CREATE TABLE measurements (
     id INTEGER PRIMARY KEY, astronaut TEXT, time TEXT, day INTEGER,
     domain TEXT, metric TEXT, value REAL, unit TEXT, source TEXT,
-    quality TEXT, detail TEXT);
+    quality TEXT, detail TEXT, UNIQUE (astronaut, metric, day, time));
 CREATE INDEX idx_meas ON measurements (astronaut, metric, day);
 
 CREATE TABLE baselines (
@@ -58,7 +58,7 @@ class DB:
     # ---------- measurements ----------
     def save_readings(self, readings):
         self.con.executemany(
-            "INSERT INTO measurements (astronaut,time,day,domain,metric,value,unit,source,quality,detail)"
+            "INSERT OR REPLACE INTO measurements (astronaut,time,day,domain,metric,value,unit,source,quality,detail)"
             " VALUES (:astronaut,:time,:day,:domain,:metric,:value,:unit,:source,:quality,:detail)",
             readings)
         self.con.commit()

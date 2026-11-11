@@ -14,7 +14,7 @@ FALLBACK: can't write the file -> summary still lives in the database
 import json
 import os
 
-from config.settings import COUNTERMEASURES, EVA_DAYS, STATUS_ORDER, worst
+from config.settings import COUNTERMEASURES, EVA_DAYS, MAX_PLAN_ACTIONS, PLAN_PRIORITY, STATUS_ORDER, worst
 from storage.db import ROOT
 
 OUT_DIR = os.path.join(ROOT, "outputs")
@@ -33,9 +33,11 @@ def act(db, astronaut, day, mods, fused):
     alerts = db.get_alerts(astronaut, day)
     tier = worst([a["tier"] for a in alerts] + [fused["overall_status"]])
 
-    # 2. countermeasures + schedule check
+    # 2. countermeasures + schedule check — most important first, at most MAX_PLAN_ACTIONS
     plan = []
-    for flag in sorted(fused["flags"]):
+    wanted = [f for f in fused["flags"] if f in COUNTERMEASURES]
+    wanted.sort(key=lambda f: PLAN_PRIORITY.index(f) if f in PLAN_PRIORITY else len(PLAN_PRIORITY))
+    for flag in wanted[:MAX_PLAN_ACTIONS]:
         if flag in COUNTERMEASURES:
             action, heavy = COUNTERMEASURES[flag]
             when, note = day + 1, ""
