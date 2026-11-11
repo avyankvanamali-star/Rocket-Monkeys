@@ -37,7 +37,14 @@ RECOVERY_MIN_DROP = 12               # bpm drop expected 60 s after workout
 RECOVERY_GRACE_MIN = 10              # HR may stay high this long after a workout
 
 # ---------------- radiation ----------------
-BACKGROUND_DOSE_RATE = 75.0          # uSv/h, rough deep-space background
+# WHERE IS THE MISSION?  Change ENVIRONMENT to "iss", "moon" or "mars" — the data maker and the engine both follow.
+ENVIRONMENTS = {
+    "iss":  15.0,   # uSv/h = 0.36 mSv/day  (ISS crews: ~0.2-0.5 mSv/day, NASA review)
+    "moon": 57.0,   # uSv/h = 1.37 mSv/day  (Chang'e 4 LND: 1,369 uSv/day on the lunar surface)
+    "mars": 75.0,   # uSv/h = 1.8 mSv/day   (Curiosity RAD: 1.8 mSv/day in transit to Mars)
+}
+ENVIRONMENT = "mars"
+BACKGROUND_DOSE_RATE = ENVIRONMENTS[ENVIRONMENT]
 EVENT_FACTOR = 3.0
 EVENT_START_WINDOWS = 12             # 1 minute above 3x background
 EVENT_END_WINDOWS = 360              # 30 minutes back to normal
