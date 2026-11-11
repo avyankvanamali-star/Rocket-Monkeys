@@ -1,1 +1,0 @@
-openai>=1.40     # client library — talks to Groq (OpenAI-compatible), not to OpenAI

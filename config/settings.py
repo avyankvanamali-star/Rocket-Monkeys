@@ -14,7 +14,7 @@ from datetime import date, datetime
 # ---------------- mission ----------------
 LAUNCH_DATE = date(2027, 3, 1)       # mission day 1
 MISSION_DAYS = 180
-CAREER_LIMIT_MSV = 600.0             # double-check the current NASA limit before presenting
+CAREER_LIMIT_MSV = 600.0             # NASA-STD-3001 Vol 1 Rev B career limit (checked Nov 2026)
 ASTRONAUTS = ["A1", "A2"]
 
 # ---------------- shared 7-step check ----------------
@@ -37,7 +37,14 @@ RECOVERY_MIN_DROP = 12               # bpm drop expected 60 s after workout
 RECOVERY_GRACE_MIN = 10              # HR may stay high this long after a workout
 
 # ---------------- radiation ----------------
-BACKGROUND_DOSE_RATE = 75.0          # uSv/h, rough deep-space background
+# WHERE IS THE MISSION?  Change ENVIRONMENT to "iss", "moon" or "mars" — the data maker and the engine both follow.
+ENVIRONMENTS = {
+    "iss":  15.0,   # uSv/h = 0.36 mSv/day  (ISS crews: ~0.2-0.5 mSv/day, NASA review)
+    "moon": 57.0,   # uSv/h = 1.37 mSv/day  (Chang'e 4 LND: 1,369 uSv/day on the lunar surface)
+    "mars": 75.0,   # uSv/h = 1.8 mSv/day   (Curiosity RAD: 1.8 mSv/day in transit to Mars)
+}
+ENVIRONMENT = "mars"
+BACKGROUND_DOSE_RATE = ENVIRONMENTS[ENVIRONMENT]
 EVENT_FACTOR = 3.0
 EVENT_START_WINDOWS = 12             # 1 minute above 3x background
 EVENT_END_WINDOWS = 360              # 30 minutes back to normal
@@ -81,6 +88,28 @@ SW_ACTIONS = {
 }
 SW_LEVEL_ACTIONS = {0: ["normal_ops"], 1: ["notify_crew", "wrap_up_eva"],
                     2: ["end_eva_now", "move_to_shelter"], 3: ["shelter_now", "safe_mode_electronics", "log_dose"]}
+
+# ---------------- radiation budget ----------------
+# NASA-STD-3001 Vol 1 Rev B: career limit 600 mSv (all ages and sexes), and at most 250 mSv from
+# one solar particle event (short-term limit).
+SPE_EVENT_LIMIT_MSV = 250.0
+SAFETY_MARGIN_PCT = 10               # keep this % of the career limit untouched as a reserve
+# Dose each astronaut got on EARLIER flights (counts toward the career limit).
+# DEMO VALUES: replace with each astronaut's real dose record.
+PRIOR_CAREER_DOSE_MSV = {"A1": 0.0, "A2": 60.0}
+# Allowance for solar storms still to come, used in the projection.
+# DEMO VALUES: storms are more common near solar maximum; ask a radiation specialist for real numbers.
+STORMS_PER_100_DAYS = 1.0            # expected solar particle events per 100 mission days
+STORM_DOSE_MSV = 10.0                # extra dose from one storm (crew sheltering). If storms measured on
+                                     # this mission were bigger on average, their average is used instead
+
+# ---------------- space weather (NOAA SWPC) ----------------
+# Live feed: python3 space_weather/get_space_weather.py  then  python3 space_weather/format_space_weather.py  (adds rows to data/space_weather.csv)
+SPACE_WEATHER_FILE = "space_weather.csv"   # inside data/
+STORM_WATCH_PROB = 20                # % chance of an S1+ radiation storm in the next 24 h -> WATCH
+STORM_ACT_PROB = 50                  # % chance -> ACT: prepare shelter, move spacewalks
+S1_PROTON_FLUX_PFU = 10              # >=10 MeV proton flux at GOES >= 10 pfu = S1 storm under way
+FEED_STALE_HOURS = 24                # no space-weather data this recent -> onboard dosimeters only
 
 # ---------------- crew schedule (hours of the day) ----------------
 SLEEP = (23.0, 7.0)
@@ -160,7 +189,7 @@ UNIT_CONVERSIONS = {
 
 # plan: at most this many actions per astronaut per day, most important first
 MAX_PLAN_ACTIONS = 3
-PLAN_PRIORITY = ["irregular_rhythm", "radiation_event", "solar_storm", "geomagnetic_storm", "cardio_drift", "missed_workouts", "muscle_loss",
+PLAN_PRIORITY = ["irregular_rhythm", "radiation_event", "solar_storm", "geomagnetic_storm", "storm_forecast", "over_budget", "cardio_drift", "missed_workouts", "muscle_loss",
                  "stone_risk_high", "sans_watch", "under_fueling", "schedule_oct", "vitd_missed"]
 
 # countermeasure lookup table  (PSEUDOCODE section 14)
@@ -175,10 +204,29 @@ COUNTERMEASURES = {
     "radiation_event": ("Use shielded area; move spacewalks out of event window", False),
     "solar_storm":     ("Solar storm today: rerun shelter drill, keep spacewalks out of flare windows", False),
     "geomagnetic_storm": ("CME storm: back up data, schedule critical uplinks after the storm", False),
+    "storm_forecast":  ("Solar storm likely: prepare storm shelter, keep spacewalks out of the next 24 h", False),
+    "over_budget":     ("Radiation budget: flight surgeon to review shielding, spacewalks and mission length", False),
     "under_fueling":   ("Raise calories/protein back to target", False),
     "irregular_rhythm":("Crew medical officer: review ECG rhythm strip", False),
 }
 # the bool = heavy physical task (planner keeps it off spacewalk days)
+
+# ---------------- score zones + what each level means ----------------
+# Every system score is 0-100 (100 = matches pre-flight baseline).
+SCORE_WATCH = 95        # score 95 or below -> WATCH
+SCORE_ACT = 90          # score below 90    -> ACT
+SCORE_URGENT = 85       # score below 85    -> URGENT  (hard rules can also raise URGENT at any score)
+LEVEL_MEANING = {
+    "ok":     "Nominal: no extra observation needed",
+    "watch":  "Watch: extra observations",
+    "act":    "Act: basic medical care onboard",
+    "urgent": "Urgent: contact mission control",
+}
+LEVEL_ACTION = {   # what goes into the daily plan for a system at that level
+    "watch":  ("Extra observations: repeat {system} measurements daily until back to nominal", 1),
+    "act":    ("Basic medical care: crew medical officer to assess {system} today", 0),
+    "urgent": ("Contact mission control now: {system}", 0),
+}                  # second value = days from today (0 = today, 1 = tomorrow)
 
 STATUS_ORDER = {"no data": -1, "no baseline": -1, "ignored": -1,
                 "ok": 0, "info": 0, "watch": 1, "act": 2, "urgent": 3}

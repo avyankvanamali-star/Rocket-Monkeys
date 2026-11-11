@@ -14,3 +14,6 @@ ml/shadow_net.pt
 
 # private Python environment (each person makes their own with: bash setup_env.sh)
 .venv/
+# real NOAA downloads (rebuild with space_weather/get_space_weather.py)
+space_weather_raw/
+space_weather_clean/

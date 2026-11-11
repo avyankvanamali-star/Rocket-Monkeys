@@ -12,7 +12,7 @@ OUTPUT (folder space_weather_clean/, all times UTC):
     alerts.csv          NOAA alerts and warnings, with a plain category (radiation storm, flare, ...)
     summary.txt         plain-language status: now, next 3 days, active radiation alerts, data age
     space_weather.csv   the Shadow Self engine format (time,kind,value,source). Also copied into
-                        shadow_self_github/data/ when that folder exists (or --engine PATH), merged
+                        data/ (the engine folder; or --engine PATH), merged
                         with what is there, no duplicates.
 
 READING THE NUMBERS
@@ -199,7 +199,7 @@ def main():
     ap = argparse.ArgumentParser(description="Format raw NOAA space weather downloads into clean tables.")
     ap.add_argument("--raw", default="space_weather_raw")
     ap.add_argument("--out", default="space_weather_clean")
-    ap.add_argument("--engine", default=os.path.join("shadow_self_github", "data"),
+    ap.add_argument("--engine", default="data",
                     help="Shadow Self data folder (skipped if it does not exist)")
     args = ap.parse_args()
 

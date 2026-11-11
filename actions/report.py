@@ -13,12 +13,24 @@ def _line(domain, mod, status):
         return "nothing measured today" if not mod["notes"] or "failed" not in mod["notes"][0] else mod["notes"][0]
     if domain == "radiation":
         b = mod.get("budget", {})
-        main = f"{b.get('total_msv', 0)} mSv used ({b.get('used_pct', 0)}%), projected {b.get('projected_msv', 0)} mSv"
+        main = f"{b.get('career_msv', b.get('total_msv', 0))} mSv career dose ({b.get('used_pct', 0)}%), projected {b.get('projected_msv', 0)} mSv"
         return (mod["notes"] or [main])[0] if status != "ok" else main
     flagged = [r["reason"] for r in mod["results"] if r["flagged"]]
     notes = [n for n in mod["notes"] if not n.startswith(("estimated", "context", "stricter"))
              and "risk LOW" not in n]
     return (notes + flagged + ["score lowered by cross-system rules"])[0]
+
+
+def budget_line(b):
+    """One line: how much more radiation this astronaut can safely take."""
+    spare = b["spare_msv"]
+    extra = (f"SPARE {spare:.0f} mSv (~{b['spare_days']:.0f} extra mission days)" if spare > 0 else
+             f"NO SPARE ({spare:.0f} mSv)")
+    chance = "" if b.get("storm_chance_24h") is None else f", storm chance 24 h {b['storm_chance_24h']:.0f}%"
+    return (f"  Radiation budget: {b['career_msv']:.1f} of {b['limit_msv']:.0f} mSv used (earlier flights "
+            f"{b['prior_msv']:.0f}) | {b['left_msv']:.0f} left | {b['reserved_msv']:.0f} reserved for "
+            f"{b['days_left']} days left | {b['margin_msv']:.0f} safety margin | {extra}\n"
+            f"                    [{b['feed']}{chance}]")
 
 
 def print_report(astronaut, day, mods, fused, action, sw=None):
@@ -30,7 +42,9 @@ def print_report(astronaut, day, mods, fused, action, sw=None):
         print(f"  {d.capitalize():<10}{score(fused['scores'][d]):>4}  {LABEL[st]:<7} {_line(d, mods[d], st)[:72]}")
     b = mods["radiation"].get("budget", {})
     print(f"  {'OVERALL':<10}{score(fused['overall']):>4}  {LABEL[fused['overall_status']]:<7} "
-          f"(radiation used: {b.get('total_msv', 0)} mSv = {b.get('used_pct', 0)}% of career limit)")
+          f"(radiation used: {b.get('career_msv', b.get('total_msv', 0))} mSv = {b.get('used_pct', 0)}% of career limit)")
+    if "spare_msv" in b:
+        print(budget_line(b))
 
     if sw and sw["max_level_name"] != "green":
         times = " ".join(f"{k.upper()} {v}" for k, v in sw["first_time"].items())

@@ -1,3 +1,0 @@
-# Everything Shadow Self needs, in one place. The engine + dashboard use only built-in Python.
--r AI-agent/requirements.txt     # AI agent (Groq)
--r requirements-ml.txt           # PyTorch model

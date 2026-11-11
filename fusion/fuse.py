@@ -15,12 +15,16 @@ DRIFT SCORE (each domain):
     severity = |change| / MDC   (or |residual| / usual residual)   — only bad-direction changes count
     score = 100 - 25 x average severity, each rule that fired -> -10, never below 0
 OVERALL = lowest domain score
+ZONES (config/settings.py): score <=95 WATCH, <90 ACT, <85 URGENT
 FALLBACK: fusion breaks -> keep module statuses, simple scores, no rules
 """
-from config.settings import (HIGH_CO2_PPM, HIGH_SODIUM_MG, LOW_FUEL_FRACTION, STATUS_ORDER,
-                             STRICT_DAYS, worst)
+from config.settings import (HIGH_CO2_PPM, HIGH_SODIUM_MG, LOW_FUEL_FRACTION, SCORE_ACT, SCORE_URGENT,
+                             SCORE_WATCH, STATUS_ORDER, STRICT_DAYS, worst)
 
 DOMAINS = ["radiation", "muscle", "bone", "sans", "cardio"]
+# score shown when a module gives only a status (no measurements); each sits inside its own zone
+SIMPLE_SCORE = {"ok": 100, "watch": (SCORE_WATCH + SCORE_ACT) / 2 + 0.5, "act": (SCORE_ACT + SCORE_URGENT) / 2,
+                "urgent": SCORE_URGENT - 5}
 
 
 def _severity(r):
@@ -43,7 +47,12 @@ def _score(results):
 
 
 def _score_status(score):
-    return "act" if score < 50 else "watch" if score < 75 else "ok"
+    """Score zones (config/settings.py): <85 urgent, <90 act, <=95 watch, else ok."""
+    if score < SCORE_URGENT:
+        return "urgent"
+    if score < SCORE_ACT:
+        return "act"
+    return "watch" if score <= SCORE_WATCH else "ok"
 
 
 def fuse(db, astronaut, day, mods, ctx, heart_flags=()):
@@ -102,7 +111,7 @@ def fuse(db, astronaut, day, mods, ctx, heart_flags=()):
         base = m[d].get("score")
         if base is None and not m[d]["results"]:
             # nothing measured today: no score unless the module still raised something
-            simple = {"watch": 70, "act": 40, "urgent": 0}.get(m[d]["status"])
+            simple = SIMPLE_SCORE.get(m[d]["status"]) if m[d]["status"] != "ok" else None
             if simple is None:
                 scores[d], statuses[d] = None, "no data"
                 continue
@@ -119,7 +128,7 @@ def fuse(db, astronaut, day, mods, ctx, heart_flags=()):
 
 def fallback_fusion(mods):
     """If fusion itself breaks: keep each module's own status, simple scores, no rules."""
-    simple = {"ok": 100, "watch": 70, "act": 40, "urgent": 0}
+    simple = SIMPLE_SCORE
     statuses = {d: mods[d]["status"] for d in DOMAINS}
     scores = {d: simple.get(s) for d, s in statuses.items()}
     known = [s for s in scores.values() if s is not None]

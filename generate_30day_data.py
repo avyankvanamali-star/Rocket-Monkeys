@@ -28,6 +28,8 @@ import random
 import sys
 from datetime import datetime, timedelta
 
+from config.settings import BACKGROUND_DOSE_RATE, ENVIRONMENT
+
 LAUNCH = datetime(2027, 3, 1)
 DAYS = 30
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -142,7 +144,7 @@ def dose_stream(a, day):
     rows, total, start = [], 0.0, LAUNCH + timedelta(days=day - 1)
     for i in range(17280):
         t = start + timedelta(seconds=5 * i)
-        rate = 75 + random.gauss(0, 3)                             # ~1.8 mSv/day background
+        rate = BACKGROUND_DOSE_RATE + random.gauss(0, 3)           # background for this environment
         if day == 20 and 14 <= t.hour < 16:                        # solar particle event, both astronauts
             rate = (600 if a == "A1" else 570) + random.gauss(0, 15)
         total += rate * 5 / 3600 / 1000
@@ -263,6 +265,7 @@ def main(seed=42):
     with open(os.path.join(OUT, "answer_key.json"), "w") as f:
         json.dump({"seed": seed, **ANSWER_KEY}, f, indent=2)
     print("  wrote data/answer_key.json")
+    print(f"  environment: {ENVIRONMENT} ({BACKGROUND_DOSE_RATE:g} uSv/h background)")
     from space_weather import simulate
     simulate.main(seed)
 
