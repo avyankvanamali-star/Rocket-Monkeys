@@ -59,6 +59,11 @@ HIGH_CO2_PPM = 3000
 SYMPTOM_LEVEL = 3
 SYMPTOM_DAYS = 3
 LOW_FUEL_FRACTION = 0.90
+# CUSUM drift detector (heart): adds up each day's 'worse than expected' gap (in noise units).
+# Small random gaps cancel out; a slow steady drift builds up -> alarm when the total passes CUSUM_H.
+# Tuned on seeds 1-6, checked on unseen seeds (see score_run.py).
+CUSUM_K = 0.25                       # ignore gaps smaller than this (noise allowance per day)
+CUSUM_H = 2.5                        # alarm when the running total passes this
 CARDIO_DRIFT_DAYS = 3                # 7 on a real mission; 3 so the 3-day demo can show it
 
 # ---------------- Shadow model ----------------
@@ -113,6 +118,11 @@ UNIT_CONVERSIONS = {
     ("uSv", "mSv"): 0.001, ("Sv", "mSv"): 1000.0, ("mSv/h", "uSv/h"): 1000.0,
     ("ml", "L"): 0.001, ("mL", "L"): 0.001, ("lb", "kg"): 0.4536,
 }
+
+# plan: at most this many actions per astronaut per day, most important first
+MAX_PLAN_ACTIONS = 3
+PLAN_PRIORITY = ["irregular_rhythm", "radiation_event", "cardio_drift", "missed_workouts", "muscle_loss",
+                 "stone_risk_high", "sans_watch", "under_fueling", "schedule_oct", "vitd_missed"]
 
 # countermeasure lookup table  (PSEUDOCODE section 14)
 COUNTERMEASURES = {

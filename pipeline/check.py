@@ -49,6 +49,7 @@ def check_metric(db, astronaut, metric, value, day, quality="good", prediction=N
     # 5. EXPECTED (Shadow Self)
     if prediction:
         predicted, resid_sd = prediction
+        resid_sd = max(resid_sd, cfg["sem"])     # the model can't be more precise than the sensor itself
         residual = value - predicted
         bad_resid = residual > 0 if cfg["bad"] == "up" else residual < 0
         r.update(predicted=round(predicted, 2), residual=round(residual, 2), resid_sd=round(resid_sd, 2),

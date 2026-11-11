@@ -76,3 +76,16 @@ def ingest_csv(path, log):
     except OSError as e:
         log.append(f"rejected (could not read file {path}: {e})")
     return clean
+
+
+def ingest_csv_rows(path, log):
+    """Like ingest_csv, but hands back ONE clean reading at a time instead of a giant list.
+    Uses almost no memory, even for millions of rows."""
+    try:
+        with open(path, newline="") as f:
+            for raw in csv.DictReader(f):
+                reading = ingest(raw, log)
+                if reading:
+                    yield reading
+    except OSError as e:
+        log.append(f"rejected (could not read file {path}: {e})")

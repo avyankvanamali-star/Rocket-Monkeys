@@ -12,8 +12,12 @@ KNOWLEDGE = os.path.join(HERE, "knowledge.md")
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 AGENT_MODEL = "openai/gpt-oss-120b"        # demo model: strong tool use
 TEST_MODEL = "llama-3.1-8b-instant"        # cheap + fast for everyday testing (higher free limits)
-MAX_TOOL_ROUNDS = 8                        # agent may call tools at most this many rounds per question
+MAX_TOOL_ROUNDS = 4                        # agent may call tools at most this many rounds per question
 MAX_ANSWER_TOKENS = 2500                   # thinking models need room to reason AND write the answer
 REASONING_EFFORT = "low"                   # for thinking models (gpt-oss): less silent thinking, faster answers
 BACKUP_MODEL = "llama-3.3-70b-versatile"   # used automatically if the main model returns an empty answer
 TEMPERATURE = 0.3                          # low = steady, factual answers
+
+# token savers
+SKIP_AI_WHEN_OK = True                     # astronaut with every system OK -> one-line summary, no AI call
+BRIEFING_GAP_SECONDS = 3                   # pause between crew briefings (stay under free-tier rate limits)
