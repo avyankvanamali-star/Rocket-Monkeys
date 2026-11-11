@@ -37,18 +37,50 @@ RECOVERY_MIN_DROP = 12               # bpm drop expected 60 s after workout
 RECOVERY_GRACE_MIN = 10              # HR may stay high this long after a workout
 
 # ---------------- radiation ----------------
-# WHERE IS THE MISSION?  Change ENVIRONMENT to "iss", "moon" or "mars" — the data maker and the engine both follow.
-ENVIRONMENTS = {
-    "iss":  15.0,   # uSv/h = 0.36 mSv/day  (ISS crews: ~0.2-0.5 mSv/day, NASA review)
-    "moon": 57.0,   # uSv/h = 1.37 mSv/day  (Chang'e 4 LND: 1,369 uSv/day on the lunar surface)
-    "mars": 75.0,   # uSv/h = 1.8 mSv/day   (Curiosity RAD: 1.8 mSv/day in transit to Mars)
-}
-ENVIRONMENT = "mars"
-BACKGROUND_DOSE_RATE = ENVIRONMENTS[ENVIRONMENT]
+BACKGROUND_DOSE_RATE = 75.0          # uSv/h, rough deep-space background
 EVENT_FACTOR = 3.0
 EVENT_START_WINDOWS = 12             # 1 minute above 3x background
 EVENT_END_WINDOWS = 360              # 30 minutes back to normal
 PASSIVE_MISMATCH = 0.10
+
+# ---------------- space weather: solar events  (space_weather/, PSEUDOCODE.md section 17) ----------------
+# Signal tree:  solar cycle -> eruption -> flare (X-ray, ~8 min) / particle event (protons, tens of min)
+#                                       -> CME (solar wind + Bz, 1-3 days) -> geomagnetic storm (Kp)
+# NOAA space weather scales (real NOAA thresholds):
+XRAY_R_LEVELS = [(2e-3, 5), (1e-3, 4), (1e-4, 3), (5e-5, 2), (1e-5, 1)]      # W/m2: M1=R1 M5=R2 X1=R3 X10=R4 X20=R5
+PROTON_S_LEVELS = [(1e5, 5), (1e4, 4), (1e3, 3), (1e2, 2), (10, 1)]          # >=10 MeV pfu: 10=S1 ... 100000=S5
+KP_G_LEVELS = [(9, 5), (8, 4), (7, 3), (6, 2), (5, 1)]                       # Kp 5=G1 ... 9=G5
+# Our rules (demo design choices, not NASA flight rules):
+FLARE_WATCH_R = 2              # flare R2 (M5) or bigger -> open a "protons may follow" window
+FLARE_WINDOW_MIN = 60          # ... for this many minutes
+PROTON_TREND_MIN = 15          # proton slope is measured over the last 15 minutes
+PROTON_RISE_DECADES_H = 0.5    # flux growing >= 10x every 2 hours counts as "rising"
+PROTON_RISE_FLOOR = 1.0        # pfu; below this the slope is just noise -> ignored
+CME_SPEED_KMS = 600            # solar wind faster than this ...
+CME_BZ_NT = -10                # ... with Bz pointing south (below this) ...
+CME_SUSTAIN_MIN = 30           # ... for 30 minutes = CME has arrived, geomagnetic storm coming
+SW_CALM_MIN = 30               # alert level only steps DOWN after 30 min of calmer readings (no flapping)
+SW_STALE_MIN = {"kp": 180}     # how long a reading stays valid (Kp comes every 3 h, the rest every 5 min)
+SW_STALE_DEFAULT_MIN = 30
+EVA_HOURS = (9.0, 15.0)        # spacewalk hours on an EVA day (spacewalk = least shielding)
+SHIELDED_BY_EARTH = False      # True = low Earth orbit: Earth's magnetic field blocks most protons -> S counts 1 lower
+
+SW_LEVELS = ["green", "watch", "warning", "critical"]
+SW_TIER = {"watch": "watch", "warning": "act", "critical": "urgent"}   # -> the engine's alert tiers
+# Fixed action list. The rules pick from it; the AI agent may only explain these, never invent new ones.
+SW_ACTIONS = {
+    "normal_ops":        "Normal operations",
+    "notify_crew":       "Tell the crew; review the route to the storm shelter",
+    "wrap_up_eva":       "Plan to end any spacewalk within 60 minutes",
+    "end_eva_now":       "End any spacewalk now and return inside",
+    "move_to_shelter":   "Move toward the storm shelter; pause non-essential tasks",
+    "shelter_now":       "SHELTER NOW in the water-walled storm shelter",
+    "safe_mode_electronics": "Put sensitive electronics in safe mode",
+    "log_dose":          "Log crew dose every 5 minutes until the storm ends",
+    "comms_backup":      "Expect comms/navigation dropouts: back up data, delay uplinks",
+}
+SW_LEVEL_ACTIONS = {0: ["normal_ops"], 1: ["notify_crew", "wrap_up_eva"],
+                    2: ["end_eva_now", "move_to_shelter"], 3: ["shelter_now", "safe_mode_electronics", "log_dose"]}
 
 # ---------------- crew schedule (hours of the day) ----------------
 SLEEP = (23.0, 7.0)
@@ -128,7 +160,7 @@ UNIT_CONVERSIONS = {
 
 # plan: at most this many actions per astronaut per day, most important first
 MAX_PLAN_ACTIONS = 3
-PLAN_PRIORITY = ["irregular_rhythm", "radiation_event", "cardio_drift", "missed_workouts", "muscle_loss",
+PLAN_PRIORITY = ["irregular_rhythm", "radiation_event", "solar_storm", "geomagnetic_storm", "cardio_drift", "missed_workouts", "muscle_loss",
                  "stone_risk_high", "sans_watch", "under_fueling", "schedule_oct", "vitd_missed"]
 
 # countermeasure lookup table  (PSEUDOCODE section 14)
@@ -141,6 +173,8 @@ COUNTERMEASURES = {
     "schedule_oct":    ("Schedule OCT eye scan", False),
     "cardio_drift":    ("Adjust aerobic intervals + protect 7.5 h sleep", True),
     "radiation_event": ("Use shielded area; move spacewalks out of event window", False),
+    "solar_storm":     ("Solar storm today: rerun shelter drill, keep spacewalks out of flare windows", False),
+    "geomagnetic_storm": ("CME storm: back up data, schedule critical uplinks after the storm", False),
     "under_fueling":   ("Raise calories/protein back to target", False),
     "irregular_rhythm":("Crew medical officer: review ECG rhythm strip", False),
 }

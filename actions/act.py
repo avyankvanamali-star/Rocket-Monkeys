@@ -15,12 +15,13 @@ import json
 import os
 
 from config.settings import COUNTERMEASURES, EVA_DAYS, MAX_PLAN_ACTIONS, PLAN_PRIORITY, STATUS_ORDER, worst
+from space_weather.check import compact
 from storage.db import ROOT
 
 OUT_DIR = os.path.join(ROOT, "outputs")
 
 
-def act(db, astronaut, day, mods, fused):
+def act(db, astronaut, day, mods, fused, ctx=None):
     # 1. domain alerts (WATCH / ACT), with the module's best reason
     for d, status in fused["statuses"].items():
         if STATUS_ORDER.get(status, -1) >= 1:
@@ -52,7 +53,8 @@ def act(db, astronaut, day, mods, fused):
               "alerts": [{k: a[k] for k in ("tier", "domain", "message")} for a in alerts
                          if STATUS_ORDER.get(a["tier"], 0) >= 1],
               "plan": plan, "sensor_doubt": fused["sensor_doubt"],
-              "radiation_budget": mods["radiation"]["budget"]}
+              "radiation_budget": mods["radiation"]["budget"],
+              "space_weather": compact((ctx or {}).get("space_weather", {}).get((astronaut, day)))}
     path = os.path.join(OUT_DIR, f"earth_summary_{astronaut}_day{day}.json")
     try:
         os.makedirs(OUT_DIR, exist_ok=True)

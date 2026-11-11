@@ -1,7 +1,7 @@
 """
 STORAGE — SQLite database file: shadow_self.db          (PSEUDOCODE.md section 3)
 
-Tables: measurements, baselines, results, alerts, plans, daily_scores
+Tables: measurements, baselines, results, alerts, plans, daily_scores, space_weather
 Open shadow_self.db in any SQLite app (e.g. DB Browser for SQLite) to look inside.
 """
 import os
@@ -10,7 +10,7 @@ import sqlite3
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(ROOT, "shadow_self.db")
 
-TABLES = ["measurements", "baselines", "results", "alerts", "plans", "daily_scores"]
+TABLES = ["measurements", "baselines", "results", "alerts", "plans", "daily_scores", "space_weather"]
 
 SCHEMA = """
 CREATE TABLE measurements (
@@ -40,6 +40,12 @@ CREATE TABLE daily_scores (
 CREATE TABLE plans (
     id INTEGER PRIMARY KEY, astronaut TEXT, made_on_day INTEGER,
     scheduled_day INTEGER, action TEXT, note TEXT);
+
+CREATE TABLE space_weather (
+    id INTEGER PRIMARY KEY, astronaut TEXT, day INTEGER, time TEXT, level INTEGER, level_name TEXT,
+    r_level INTEGER, s_level INTEGER, g_level INTEGER, proton_pfu REAL, xray_flux REAL,
+    reasons TEXT, actions TEXT);
+CREATE INDEX idx_sw ON space_weather (astronaut, day);
 """
 
 
@@ -152,6 +158,20 @@ class DB:
             "INSERT INTO plans (astronaut,made_on_day,scheduled_day,action,note) VALUES (?,?,?,?,?)",
             (astronaut, made_on_day, scheduled_day, action, note))
         self.con.commit()
+
+    # ---------- space weather (every alert-level change) ----------
+    def save_space_weather(self, astronaut, steps):
+        self.con.executemany(
+            "INSERT INTO space_weather (astronaut,day,time,level,level_name,r_level,s_level,g_level,"
+            "proton_pfu,xray_flux,reasons,actions) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            [(astronaut, st["day"], st["time"].isoformat(), st["level"], st["level_name"], st["r"], st["s"],
+              st["g"], st["proton_pfu"], st["xray_flux"], "; ".join(st["reasons"]), ",".join(st["actions"]))
+             for st in steps])
+        self.con.commit()
+
+    def get_space_weather(self, astronaut, day):
+        return [dict(r) for r in self.con.execute(
+            "SELECT * FROM space_weather WHERE astronaut=? AND day=? ORDER BY time", (astronaut, day))]
 
 
 def open_db(path=DB_PATH):

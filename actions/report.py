@@ -21,7 +21,7 @@ def _line(domain, mod, status):
     return (notes + flagged + ["score lowered by cross-system rules"])[0]
 
 
-def print_report(astronaut, day, mods, fused, action):
+def print_report(astronaut, day, mods, fused, action, sw=None):
     score = lambda s: "--" if s is None else f"{s:.0f}"
     print(f"\n  Astronaut {astronaut} — Day {day}   [{LABEL.get(action['tier'], action['tier'])}]")
     print("  " + "-" * 68)
@@ -32,6 +32,13 @@ def print_report(astronaut, day, mods, fused, action):
     print(f"  {'OVERALL':<10}{score(fused['overall']):>4}  {LABEL[fused['overall_status']]:<7} "
           f"(radiation used: {b.get('total_msv', 0)} mSv = {b.get('used_pct', 0)}% of career limit)")
 
+    if sw and sw["max_level_name"] != "green":
+        times = " ".join(f"{k.upper()} {v}" for k, v in sw["first_time"].items())
+        peak = " ".join(f"{k}{sw['peak_' + k.lower()]}" for k in ("S", "R", "G") if sw["peak_" + k.lower()])
+        print(f"  Space wx  {sw['max_level_name'].upper():<8} {times}  | peak {peak} flare {sw['peak_flare']}")
+        if sw.get("lead_min") is not None:
+            print(f"            satellites warned {sw['lead_min']} min before the crew dosimeter "
+                  f"({sw['lead_level'].upper()} level)")
     if fused["rules"]:
         print("  Rules fired: " + ", ".join(r[0] for r in fused["rules"]))
     for a in action["alerts"]:

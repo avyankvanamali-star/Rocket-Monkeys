@@ -59,7 +59,7 @@ TABS = [("overview", "Overview"), ("systems", "Systems"), ("report", "Report"),
 # which system each countermeasure protects (so the top-3 list can rank plan items by how bad that system is)
 CM_DOMAIN = {"missed_workouts": "muscle", "muscle_loss": "muscle", "stone_risk_high": "bone", "vitd_missed": "bone",
              "sans_watch": "sans", "schedule_oct": "sans", "cardio_drift": "cardio", "radiation_event": "radiation",
-             "under_fueling": "muscle", "irregular_rhythm": "cardio"}
+             "solar_storm": "radiation", "geomagnetic_storm": "radiation", "under_fueling": "muscle", "irregular_rhythm": "cardio"}
 ACTION_DOMAIN = {COUNTERMEASURES[k][0]: v for k, v in CM_DOMAIN.items() if k in COUNTERMEASURES}
 # everyday activity per system, used to fill the top-3 list when the engine planned fewer than 3 countermeasures
 MAINTAIN = {

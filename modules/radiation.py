@@ -8,6 +8,8 @@ projected total = total + burn rate x days left
 projected > limit -> ACT | percent used > 80% -> WATCH
 passive dosimeter differs from active by >10% -> "sensor doubt"
 event today -> note it (cardio gets stricter for 7 days)
+space weather today (space_weather/): WARNING+ -> flag "solar_storm" + WATCH, CME/G-storm -> "geomagnetic_storm",
+    note the peak + how many minutes the satellites warned before the dosimeter
 """
 from config.settings import CAREER_LIMIT_MSV, MISSION_DAYS, PASSIVE_MISMATCH
 from pipeline.check import module_result
@@ -40,6 +42,21 @@ def run(db, astronaut, day, ctx):
     if day in ctx["rad_event_days"].get(astronaut, []):
         flags.append("radiation_event")
         notes.append("radiation event today")
+
+    sw = ctx.get("space_weather", {}).get((astronaut, day))
+    if sw:
+        level = sw["max_level_name"]
+        if level in ("warning", "critical"):
+            flags.append("solar_storm")
+            statuses.append("watch")
+        if sw["cme"] or (sw["peak_g"] or 0) >= 1:
+            flags.append("geomagnetic_storm")
+        if level != "green":
+            peak = ", ".join(f"{k}{sw['peak_' + k.lower()]}" for k in ("S", "R", "G") if sw["peak_" + k.lower()])
+            lead = (f", satellites warned {sw['lead_min']} min before the dosimeter"
+                    if sw.get("lead_min") is not None else "")
+            notes.append(f"space weather {level.upper()} from {sw['first_time'].get('watch', '?')} "
+                         f"(peak {peak or 'none'}, flare {sw['peak_flare']}){lead}")
 
     # score: 100 while projected < 80% of limit, falling to 0 at 120%
     score = 100.0 if fraction <= 0.8 else max(0.0, 100 * (1.2 - fraction) / 0.4)

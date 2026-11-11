@@ -8,7 +8,9 @@ CROSS-SYSTEM RULES:
     Fluid Shift Cluster: SANS watch AND (BP up OR sodium high OR CO2 high)  -> raise SANS + cardio
     Radiation Stress   : radiation event in last 7 days AND cardio watch    -> raise cardio
     Under-Fueling      : calories/protein low AND (muscle OR bone watch)    -> raise muscle + bone
+    Solar Storm Confirmed: satellites say WARNING+ AND crew dosimeter saw the event -> raise radiation
     Sensor Doubt       : conflicting or bad data -> low confidence, no alert
+                         (also: satellites show S3+ storm but the dosimeter stayed flat)
 DRIFT SCORE (each domain):
     severity = |change| / MDC   (or |residual| / usual residual)   — only bad-direction changes count
     score = 100 - 25 x average severity, each rule that fired -> -10, never below 0
@@ -78,8 +80,15 @@ def fuse(db, astronaut, day, mods, ctx, heart_flags=()):
     if low_fuel and (at_least_watch("muscle") or at_least_watch("bone")):
         fire("Under-Fueling", ["muscle", "bone"], "calories/protein below target")
         flags.add("under_fueling")
+    # Solar Storm Confirmed (two independent sources agree)
+    sw = ctx.get("space_weather", {}).get((astronaut, day))
+    dosimeter_event = day in ctx["rad_event_days"].get(astronaut, [])
+    if sw and "solar_storm" in flags and dosimeter_event:
+        fire("Solar Storm Confirmed", ["radiation"], "satellite proton storm + crew dosimeter spike")
     # Sensor Doubt (no alert, lower confidence)
     doubts = []
+    if sw and (sw["peak_s"] or 0) >= 3 and not dosimeter_event:
+        doubts.append(f"satellites show S{sw['peak_s']} storm but crew dosimeter stayed flat — check dosimeter")
     if "sensor_doubt" in flags:
         doubts.append("radiation dosimeters disagree")
     if "ecg_strap" in heart_flags:
