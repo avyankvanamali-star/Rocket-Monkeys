@@ -1,7 +1,8 @@
+
 """
 AGENT TOOLS — the agent's eyes. Each tool reads shadow_self.db and returns SHORT text
 (Groq's free tier allows ~8,000 tokens a minute, so every result is kept compact).
-
+ 
 get_overview()                       who + which days exist + latest overall scores
 get_scores(astronaut, day)           5 system scores + statuses for one day
 get_alerts(astronaut, day)           alerts with reasons
@@ -9,7 +10,8 @@ get_checks(astronaut, day)           the flagged 7-step checks (value, baseline,
 get_trend(astronaut, metric)         a metric day by day vs baseline
 get_plan(astronaut, day)             countermeasures already scheduled
 look_up_guideline(topic)             a section of knowledge.md (the team's research)
-
+get_model_check(astronaut, day)      PyTorch shadow model: is this day unusual for THIS astronaut (all metrics together)
+ 
 Fallback: any error -> a short "tool error: ..." text, never a crash.
 """
 import json
@@ -17,44 +19,44 @@ import os
 import re
 import sqlite3
 import sys
-
+ 
 from agent_settings import DB_PATH, KNOWLEDGE, ROOT
-
+ 
 if ROOT not in sys.path:
     sys.path.append(ROOT)   # after installed packages, so our folder names never shadow them
 try:
     from config.settings import METRICS
 except Exception:  # noqa: BLE001
     METRICS = {}
-
+ 
 TOPICS = ["radiation", "muscle", "bone", "sans", "cardio", "sleep_and_co2", "scoring"]
-
-
+ 
+ 
 def _db():
     if not os.path.exists(DB_PATH):
         raise FileNotFoundError("no shadow_self.db yet — run python3 main.py first")
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     return con
-
-
+ 
+ 
 def _rows(sql, args=()):
     con = _db()
     try:
         return [dict(r) for r in con.execute(sql, args)]
     finally:
         con.close()
-
-
+ 
+ 
 def _latest_day(astronaut):
     r = _rows("SELECT MAX(day) AS d FROM daily_scores WHERE astronaut=?", (astronaut,))
     return r[0]["d"] if r and r[0]["d"] is not None else None
-
-
+ 
+ 
 def _label(metric):
     return METRICS.get(metric, {}).get("label", metric)
-
-
+ 
+ 
 # ---------------- tools ----------------
 def get_overview():
     crew = _rows("SELECT astronaut, MIN(day) AS first, MAX(day) AS last FROM daily_scores GROUP BY astronaut")
@@ -66,8 +68,8 @@ def get_overview():
         lines.append(f"{c['astronaut']}: days {c['first']}-{c['last']}, latest overall "
                      f"{'--' if s.get('score') is None else round(s['score'])} {str(s.get('status', '')).upper()}")
     return "\n".join(lines) or "No results in the database yet."
-
-
+ 
+ 
 def get_scores(astronaut, day=None):
     day = day or _latest_day(astronaut)
     rows = _rows("SELECT domain, score, status FROM daily_scores WHERE astronaut=? AND day=?", (astronaut, day))
@@ -77,8 +79,8 @@ def get_scores(astronaut, day=None):
     for r in rows:
         out.append(f"- {r['domain']}: {'--' if r['score'] is None else round(r['score'])} {r['status'].upper()}")
     return "\n".join(out)
-
-
+ 
+ 
 def get_alerts(astronaut, day=None):
     day = day or _latest_day(astronaut)
     rows = _rows("SELECT time, tier, domain, message FROM alerts WHERE astronaut=? AND day=? AND tier!='info' "
@@ -87,8 +89,8 @@ def get_alerts(astronaut, day=None):
         return f"No alerts for {astronaut} on day {day}."
     return "\n".join(f"- {r['tier'].upper()} {('at ' + r['time'][11:16]) if r['time'] else '(daily)'} "
                      f"[{r['domain']}] {r['message'][:220]}" for r in rows[:10])
-
-
+ 
+ 
 def get_checks(astronaut, day=None):
     day = day or _latest_day(astronaut)
     rows = _rows("SELECT domain, metric, value, baseline, pct_change, predicted, status FROM results "
@@ -106,8 +108,8 @@ def get_checks(astronaut, day=None):
         out.append(f"- [{r['domain']}] {_label(r['metric'])}: now {r['value']:g}, baseline {round(r['baseline'], 1):g}{pct}"
                    f"{exp} -> {r['status'].upper()}" + (f" ({meaning})" if meaning else ""))
     return "\n".join(out)
-
-
+ 
+ 
 def get_trend(astronaut, metric):
     metric = metric.strip().lower().replace(" ", "_")
     rows = _rows("SELECT day, value, baseline, predicted, status FROM results "
@@ -120,8 +122,8 @@ def get_trend(astronaut, metric):
         exp = "" if r["predicted"] is None else f", expected {r['predicted']:g}"
         out.append(f"- day {r['day']}: {r['value']:g}{exp} -> {r['status'].upper()}")
     return "\n".join(out)
-
-
+ 
+ 
 def get_plan(astronaut, day=None):
     day = day or _latest_day(astronaut)
     rows = _rows("SELECT scheduled_day, action, note FROM plans WHERE astronaut=? AND made_on_day=?",
@@ -130,24 +132,39 @@ def get_plan(astronaut, day=None):
         return f"No countermeasures scheduled on day {day}."
     return "\n".join(f"- day {r['scheduled_day']}: {r['action']}" + (f" ({r['note']})" if r["note"] else "")
                      for r in rows)
-
-
+ 
+ 
 def get_day_summary(astronaut, day=None):
     """Everything for one astronaut-day in ONE call: scores, alerts, flagged checks, plan."""
     day = day or _latest_day(astronaut)
     return "\n\n".join([get_scores(astronaut, day), "ALERTS:\n" + get_alerts(astronaut, day),
                          "CHANGED MEASUREMENTS:\n" + get_checks(astronaut, day),
-                         "PLAN ALREADY SCHEDULED:\n" + get_plan(astronaut, day)])
-
-
+                         "PLAN ALREADY SCHEDULED:\n" + get_plan(astronaut, day),
+                         "AI MODEL CHECK:\n" + get_model_check(astronaut, day)])
+ 
+ 
+def get_model_check(astronaut, day=None):
+    """PyTorch shadow model (shadow_model.py). Never crashes the agent: problems come back as short text."""
+    try:
+        from shadow_model import check_day
+    except ImportError:
+        return "Shadow model unavailable (PyTorch not installed: pip install torch). Use the rule-based checks."
+    try:
+        day = day or _latest_day(astronaut)
+        rows = _rows("SELECT day, metric, value, baseline, flagged FROM results WHERE astronaut=?", (astronaut,))
+        return check_day(rows, astronaut, day, _label)
+    except Exception as e:  # noqa: BLE001
+        return f"Shadow model error: {type(e).__name__}: {e}"
+ 
+ 
 def look_up_guideline(topic):
     """One topic, or several separated by commas ("bone, cardio")."""
     topics = [t for t in re.split(r"[,/ ]+(?:and\s+)?", topic) if t.strip()]
     if len(topics) > 1:
         return "\n\n".join(f"## {t.strip()}\n{_guideline(t)}" for t in topics[:5])
     return _guideline(topic)
-
-
+ 
+ 
 def _guideline(topic):
     topic = topic.strip().lower()
     aliases = {"heart": "cardio", "cardiovascular": "cardio", "eyes": "sans", "eye": "sans", "brain": "sans",
@@ -158,17 +175,17 @@ def _guideline(topic):
         text = f.read()
     m = re.search(rf"^## {re.escape(topic)}\n(.*?)(?=^## |\Z)", text, re.S | re.M)
     return m.group(1).strip() if m else f"No guideline for '{topic}'. Topics: {', '.join(TOPICS)}"
-
-
+ 
+ 
 # ---------------- tool registry for the model ----------------
 def _spec(name, description, props=None, required=()):
     return {"type": "function", "function": {"name": name, "description": description, "parameters": {
         "type": "object", "properties": props or {}, "required": list(required)}}}
-
-
+ 
+ 
 A = {"astronaut": {"type": "string", "description": "astronaut id, e.g. A2"}}
 D = {"day": {"type": "integer", "description": "mission day; leave out for the latest day"}}
-
+ 
 TOOL_SPECS = [
     _spec("get_day_summary", "BEST FIRST CALL: everything for one astronaut-day at once — scores, alerts, "
                              "changed measurements, scheduled plan.", {**A, **D}, ["astronaut"]),
@@ -181,15 +198,18 @@ TOOL_SPECS = [
     _spec("get_trend", "One metric day by day vs baseline, e.g. hrv_rmssd, urine_calcium, quad_csa.",
           {**A, "metric": {"type": "string"}}, ["astronaut", "metric"]),
     _spec("get_plan", "Countermeasures the system already scheduled.", {**A, **D}, ["astronaut"]),
+    _spec("get_model_check", "PyTorch shadow model: compares ALL of an astronaut's metrics together against "
+                             "their own normal days. Catches several small changes adding up before rules fire. "
+                             "Returns NORMAL / EDGING / UNUSUAL and the metrics driving it.", {**A, **D}, ["astronaut"]),
     _spec("look_up_guideline", "The team's research for a topic: what signals mean and what countermeasures help. "
                                "Several at once: 'bone, cardio, sans'. Topics: " + ", ".join(TOPICS), {"topic": {"type": "string"}}, ["topic"]),
 ]
-
+ 
 FUNCTIONS = {"get_day_summary": get_day_summary, "get_overview": get_overview, "get_scores": get_scores, "get_alerts": get_alerts,
              "get_checks": get_checks, "get_trend": get_trend, "get_plan": get_plan,
-             "look_up_guideline": look_up_guideline}
-
-
+             "look_up_guideline": look_up_guideline, "get_model_check": get_model_check}
+ 
+ 
 def run_tool(name, arguments):
     """Run one tool call from the model. Fallback: any problem -> a short error text the model can read."""
     try:
