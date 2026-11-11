@@ -1,7 +1,10 @@
 # Shadow Self — astronaut health engine (core, no UI)
 
 ## Dashboard app (easiest)
-    python3 app.py                      # opens http://localhost:8000 in your browser (Ctrl + C to stop)
+    python3 UI/app.py                   # opens http://localhost:8002 in your browser (Ctrl + C to stop)
+                                        # / = landing page with a live demo, /app = the dashboard
+                                        # already running? it just opens that copy; it reloads itself on code edits
+                                        # all website files are in UI/ (see UI/README.md)
 - Pick an astronaut and a day, see the 5 system scores, alerts, plan, trend, and every check.
 - "Add a reading": type any measurement -> it's checked like a sensor reading, saved to
   data/manual.csv, and the engine re-runs. Use the next day number to add a new day.
