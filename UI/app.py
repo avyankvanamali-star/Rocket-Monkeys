@@ -498,7 +498,15 @@ def serve_online(port):
         STARTING.clear()
         print("Online first start: ready", flush=True)
 
-    threading.Thread(target=prepare, daemon=True).start()
+    def prepare_then_warm():
+        prepare()
+        try:
+            landing()                                     # build + cache the landing page before the first visitor
+            print("Landing page ready", flush=True)
+        except Exception as err:  # noqa: BLE001  a visitor will just build it instead
+            print(f"Landing page warm-up skipped: {err}", flush=True)
+
+    threading.Thread(target=prepare_then_warm, daemon=True).start()
     server.serve_forever()
 
 

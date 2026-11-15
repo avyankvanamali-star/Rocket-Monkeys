@@ -8,9 +8,14 @@ Fallbacks: no JS / no WebGL / reduced motion -> the server-drawn radar and every
 import html
 import json
 import math
+import os
 
 from config.settings import METRICS
 from UI.page import BUILD, asset_v, client_data, load
+from storage.db import DB_PATH
+
+SHOW_DAYS = 5          # the landing page tells the story in a few days (fast, short scroll); the dashboard keeps every day
+_CACHE = {}            # the built page, reused until the engine writes new results
 
 e = lambda s: html.escape(str(s), quote=True)
 LABEL = {"ok": "Nominal", "watch": "Watch", "act": "Act", "urgent": "Urgent", None: "No data"}
@@ -182,15 +187,61 @@ def anatomy():
   {detail}{"".join(table)}</svg>"""
 
 
+def story_window(data, a, n=SHOW_DAYS):
+    """The n mission days in a row where the featured astronaut drops the most: the clearest few days to show."""
+    days, by = data["crew"][a]["days"], data["crew"][a]["by_day"]
+    if len(days) <= n:
+        return list(days)
+    ov = lambda d: by[d]["overall"]
+    best, best_drop = days[-n:], -1.0
+    for i in range(len(days) - n + 1):
+        w = days[i:i + n]
+        vals = [ov(d) for d in w if ov(d) is not None]
+        if ov(w[0]) is None or not vals:
+            continue
+        drop = ov(w[0]) - min(vals)
+        if drop > best_drop:
+            best, best_drop = w, drop
+    return list(best)
+
+
+def _cache_key():
+    """Changes whenever the engine writes the database or the CSS / JS change."""
+    try:
+        stamps = tuple(os.stat(f).st_mtime_ns for f in (DB_PATH, DB_PATH + "-wal") if os.path.exists(f))
+    except OSError:
+        return None
+    return (stamps, asset_v(), BUILD) if stamps else None
+
+
 def landing():
+    """The landing page, built once per set of engine results (building it reads every day, so it is slow)."""
+    key = _cache_key()
+    if key is not None and _CACHE.get("key") == key:
+        return _CACHE["html"]
+    out = _build_landing()
+    if key is not None and "No engine results yet" not in out:
+        _CACHE.clear()
+        _CACHE.update(key=key, html=out)
+    return out
+
+
+def _build_landing():
     data = crew_data()
     if data is None:
         return ("<!doctype html><meta charset=utf-8><title>Shadow Self</title>"
                 "<p style='font:16px system-ui;padding:40px'>No engine results yet. <a href='/app'>Open the dashboard</a> and run the engine first.</p>")
     a = featured(data)
+    window = story_window(data, a)
+    keep = set(window)
+    for x in data["crew"]:                                # every crew member, same few days
+        c = data["crew"][x]
+        c["days"] = [d for d in c["days"] if d in keep]
+        c["by_day"] = {d: c["by_day"][d] for d in c["days"]}
     days = data["crew"][a]["days"]
     first, last = data["crew"][a]["by_day"][days[0]], data["crew"][a]["by_day"][days[-1]]
     calc, calc_unit = series(a, "Urine calcium")
+    calc = [h for h in calc if h[0] in keep]                # the reading graph: the same few days
     calc_range = METRICS.get("urine_calcium", {}).get("range", ("", ""))
     worst_last = min(last["sys"], key=lambda k: last["sys"][k][0] if last["sys"][k][0] is not None else 999)
     others = [x for x in data["crew"] if x != a]
@@ -281,7 +332,7 @@ def landing():
     </div>
     <div class="window" data-window>
       <div class="chrome"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span class="addr">localhost · Shadow Self dashboard</span><a class="pop" href="/app?a={e(a)}&amp;day={days[0]}" target="_blank" rel="noopener">Open full screen</a></div>
+        <span class="addr">Shadow Self dashboard</span><a class="pop" href="/app?a={e(a)}&amp;day={days[0]}" target="_blank" rel="noopener">Open full screen</a></div>
       <div class="viewport" data-viewport>
         <iframe title="Shadow Self dashboard, live and read-only" data-src="/app?a={e(a)}&amp;day={days[0]}" loading="lazy" tabindex="0"></iframe>
         <div class="shield" data-shield hidden></div>
