@@ -293,9 +293,13 @@
     const sheet = $("[data-sheet]");
     if (sheet) {
       sheet.classList.add("armed");
-      const tl = gsap.timeline({ scrollTrigger: { trigger: sheet, start: "top 80%", end: "center 55%", scrub: .6 } });
-      tl.to($$(".d", sheet), { strokeDashoffset: 0, ease: "none", stagger: .02, duration: .5 })
-        .to($$("text, .hatch, .pin, .dot", sheet), { opacity: 1, ease: "none", stagger: .005, duration: .2 }, ">-0.3");
+      // plays once, start to finish, when the sheet comes into view (not tied to scroll, so it never stops half-drawn)
+      const tl = gsap.timeline({ paused: true, onComplete: () => {     // drawn: back to plain solid lines, no corner gaps
+        sheet.classList.remove("armed"); gsap.set($$(".d", sheet), { clearProps: "strokeDashoffset" }); } });
+      tl.to($$(".d", sheet), { strokeDashoffset: 0, duration: 1.2, ease: "power2.inOut", stagger: { amount: 1 } })
+        .to($$("text, .hatch, .pin, .dot", sheet), { opacity: 1, duration: .5, ease: "power1.out", stagger: { amount: .4 } }, "-=0.8");
+      const sheetST = ST.create({ trigger: sheet, start: "top 80%", once: true, onEnter: () => tl.play() });
+      if (sheetST.progress > 0) tl.play();                // page opened already scrolled past it
     }
     $$(".steps li").forEach((li, i) => gsap.fromTo(li, { "--p": 0 }, { "--p": 1, ease: "none",
       scrollTrigger: { trigger: ".steps", start: `top ${78 - i * 6}%`, end: `top ${58 - i * 6}%`, scrub: true } }));

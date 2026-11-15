@@ -187,7 +187,7 @@ h2 { font-size: clamp(32px, 4.2vw, 56px); line-height: 1.04; letter-spacing: -.0
 .sheet .title { font: 500 12px var(--sans); letter-spacing: .1em; }
 .sheet .sub { font: 400 10px var(--sans); letter-spacing: .06em; fill: #5A616D; }
 .sheet .cell { font: 400 12px var(--sans); } .sheet .cell.v { font-family: var(--mono); }
-.armed .sheet .d { stroke-dasharray: 1; stroke-dashoffset: 1; }
+.armed .sheet .d { stroke-dasharray: 1.05; stroke-dashoffset: 1.05; }
 .armed .sheet text, .armed .sheet .hatch, .armed .sheet .pin, .armed .sheet .dot { opacity: 0; }
 
 /* ---------- how ---------- */
