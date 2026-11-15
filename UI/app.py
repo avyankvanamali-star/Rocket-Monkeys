@@ -72,6 +72,11 @@ MAX_FORM_KB = 256
 # database tables while it runs); CSS / JS / template never wait.
 WORK = threading.Lock()
 WAIT_FOR_ENGINE_S = 300
+STARTING = threading.Event()                              # online first start: data still being made
+STARTING_PAGE = ("<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=10>"
+                 "<title>Shadow Self · starting up</title><body style='background:#070B14;color:#E6EAF2;"
+                 "font:18px system-ui;padding:60px'><h1 style='font-weight:500'>Shadow Self is starting up</h1>"
+                 "<p>Preparing the mission data. This page refreshes by itself in a few seconds.</p></body>")
 TEMPLATE = """astronaut,time,metric,value,unit,source,quality,detail
 A2,2027-03-04T07:00:00,resting_hr,63,bpm,manual,good,
 A2,2027-03-04T09:30:00,urine_calcium,305,mg/day,urine_test,good,
@@ -322,12 +327,16 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/" and set(q) & {"a", "day", "msg", "kind"}:   # old dashboard link -> same view at /app
             return self._moved("/app?" + url.query)
         if url.path == "/":
+            if STARTING.is_set():
+                return self._send(200, STARTING_PAGE)
             try:
                 return self._send(200, landing())
             except Exception as err:  # noqa: BLE001  fallback: simple error page
                 return self._send(500, f"<h1>Landing page error</h1><p>{html.escape(str(err))}</p><p><a href='/app'>Dashboard</a></p>")
         if url.path != "/app":
             return self._send(404, "Not found", "text/plain")
+        if STARTING.is_set():
+            return self._send(200, STARTING_PAGE)
         if WORK.acquire(timeout=WAIT_FOR_ENGINE_S):           # engine mid-run -> wait, then show fresh results
             WORK.release()
         try:
@@ -468,14 +477,28 @@ def serve_online(port):
     Listens on every address (0.0.0.0) so people on the internet can reach it, makes the sample data
     and database on first start (data/ and shadow_self.db are not on GitHub), and skips the
     laptop-only extras (opening a browser, restarting on code changes)."""
-    if not os.path.exists(os.path.join(DATA, "mission.csv")):
-        print("Online first start: making sample data...", flush=True)
-        print(generate_data()[1], flush=True)
-    if not os.path.exists(os.path.join(ROOT, "shadow_self.db")):
-        print("Online first start: processing data...", flush=True)
-        print(run_engine()[1], flush=True)
-    server = Server(("0.0.0.0", port), Handler)
+    server = Server(("0.0.0.0", port), Handler)          # open the port FIRST, so the host sees the site straight away
     print(f"Shadow Self online on port {port}", flush=True)
+
+    def prepare():
+        """Make missing sample data / database in the background. Page loads wait on WORK until it is done.
+        (Render's build command can make them ahead of time, then there is nothing to do here.)"""
+        need_data = not os.path.exists(os.path.join(DATA, "mission.csv"))
+        need_db = not os.path.exists(os.path.join(ROOT, "shadow_self.db"))
+        if not (need_data or need_db):
+            return
+        STARTING.set()
+        with WORK:
+            if need_data:
+                print("Online first start: making sample data...", flush=True)
+                print(generate_data()[1], flush=True)
+            if need_db:
+                print("Online first start: processing data...", flush=True)
+                print(run_engine()[1], flush=True)
+        STARTING.clear()
+        print("Online first start: ready", flush=True)
+
+    threading.Thread(target=prepare, daemon=True).start()
     server.serve_forever()
 
 
