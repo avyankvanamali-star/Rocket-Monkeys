@@ -216,7 +216,7 @@ def landing():
 
     return f"""<!doctype html><html lang="en" data-build="{BUILD}-{v}" class="no-js"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Shadow Self · each astronaut against their own shadow</title>
+<title>Shadow Self · A crewmate that’s always got your back</title>
 <meta name="description" content="Shadow Self learns each crew member's pre-flight normal and scores five body systems every mission day by how far they drift from it.">
 <meta name="theme-color" content="#070B14"><meta name="color-scheme" content="dark light">
 <script>document.documentElement.classList.replace("no-js","js")</script>
@@ -238,7 +238,7 @@ def landing():
     <div class="gl" data-gl aria-hidden="true">{hero_fallback(data, a)}</div>
     <div class="ax-labels" data-axlabels aria-hidden="true"></div>
     <div class="hero-copy">
-      <h1 id="hero-h" data-split>Every astronaut, measured against their own shadow</h1>
+      <h1 id="hero-h" data-split>A crewmate that’s always got your back</h1>
       <p class="lede">Shadow Self learns each crew member's pre-flight normal, then scores five body systems every mission day by how far they have drifted from it.</p>
       <div class="ctas"><a class="btn light" href="#demo">Watch the live demo</a><a class="link" href="/app">Open the dashboard</a></div>
     </div>
